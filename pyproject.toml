@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cubecobra-cuber"
+version = "0.1.0"
+description = "Local cube management toolkit for CubeCobra"
+requires-python = ">=3.9"
+dependencies = [
+    "typer>=0.12",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "openai>=1.0",
+]
+
+[project.scripts]
+cuber = "cuber.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cuber*"]

@@ -1,0 +1,40 @@
+# Virtual environment
+.venv/
+
+# Local cube data (fetched & enriched files — not committed)
+cubes/
+
+# Environment variables (contains API keys)
+.env
+* - Copy.env
+
+# Claude Code local settings (machine-specific paths)
+.claude/settings.local.json
+.claude/skills/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# SQLite cache
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local context files (design AI, notes)
+.context-*.md
