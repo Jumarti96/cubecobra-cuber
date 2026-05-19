@@ -6,7 +6,6 @@ cubes/
 
 # Environment variables (contains API keys)
 .env
-* - Copy.env
 
 # Claude Code local settings (machine-specific paths)
 .claude/settings.local.json
