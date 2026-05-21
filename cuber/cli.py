@@ -11,7 +11,7 @@ import typer
 
 from . import scryfall, stats as stats_mod, exporter, tagger, cubecobra
 from .cube import CUBES_DIR, find_cube_dir, load_cube_from_mainboard_csv, load_enriched, load_meta, save_enriched
-from .cube_manager import fetch_and_disassemble, add_cards, remove_cards, dedup_mainboard, cube_status, assemble_export, backfill_tags_to_mainboard
+from .cube_manager import fetch_and_disassemble, add_cards, remove_cards, dedup_mainboard, cube_status, assemble_export, backfill_tags_to_mainboard, swap_card
 
 app = typer.Typer(
     name="cuber",
@@ -112,11 +112,13 @@ def add_card(
     stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
     maybeboard: bool = typer.Option(False, "--maybeboard", help="Add to maybeboard instead of mainboard"),
     count: Optional[int] = typer.Option(None, "--count", help="Add this many copies of each card (default: 1 per name supplied)"),
+    no_verify: bool = typer.Option(False, "--no-verify", help="Skip Scryfall verification (bulk imports with known-good names)"),
 ):
     """Add one or more cards to the cube mainboard (or maybeboard).
 
     Always adds exactly what you request — no deduplication against existing cards.
     Passing a name twice adds two copies. Use --count N to add N copies of each card.
+    Cards are verified against Scryfall by default; use --no-verify to skip.
     """
     all_names: List[str] = list(names or [])
 
@@ -147,7 +149,7 @@ def add_card(
 
     board = "maybeboard" if maybeboard else "mainboard"
     try:
-        result = add_cards(id_or_slug, all_names, board=board)
+        result = add_cards(id_or_slug, all_names, board=board, verify=not no_verify)
     except FileNotFoundError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)
@@ -156,7 +158,52 @@ def add_card(
         typer.echo(f"Added to {board} ({len(result['added'])}):")
         for name in result["added"]:
             typer.echo(f"  + {name}")
+
+    for c in result.get("corrections", []):
+        typer.echo(f'  "{c["input"]}" -> added as "{c["canonical"]}"')
+
+    if result.get("not_found"):
+        typer.echo(f"\nNot found on Scryfall ({len(result['not_found'])}) — not added:")
+        for name in result["not_found"]:
+            typer.echo(f"  ? {name}")
+        typer.echo("  Re-run with the correct card name.")
+
+    if result.get("unverified"):
+        if no_verify:
+            typer.echo(f"\n(unverified — run `cuber enrich {id_or_slug}` to hydrate)")
+        else:
+            for name in result["unverified"]:
+                typer.echo(f'  ! "{name}" added unverified (Scryfall unreachable)')
+
+    if result["added"] and not result.get("unverified"):
         typer.echo(f"\nRun `cuber enrich {id_or_slug}` to hydrate new cards with Scryfall data.")
+
+
+@app.command()
+def swap(
+    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    old_name: str = typer.Argument(..., help="Card name to remove"),
+    new_name: str = typer.Argument(..., help="Card name to add (verified via Scryfall)"),
+    maybeboard: bool = typer.Option(False, "--maybeboard", help="Operate on maybeboard instead of mainboard"),
+):
+    """Atomically replace one card with another. New card is verified via Scryfall first."""
+    board = "maybeboard" if maybeboard else "mainboard"
+    try:
+        result = swap_card(id_or_slug, old_name, new_name, board=board)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    if "error" in result:
+        typer.echo(f"Error: {result['error']}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"  - {result['removed']}")
+    added_label = result["added"]
+    if result.get("correction"):
+        added_label = f'{result["added"]}  ("{new_name}" -> swapped in as "{result["added"]}")'
+    typer.echo(f"  + {added_label}")
+    typer.echo(f"\nRun `cuber enrich {id_or_slug}` to hydrate the new card with Scryfall data.")
 
 
 @app.command("remove-card")
@@ -272,10 +319,11 @@ def status(
 @app.command()
 def export(
     id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    skip_scryfall: bool = typer.Option(False, "--skip-scryfall", help="Skip Scryfall validation (offline use)"),
 ):
     """Validate mainboard and assemble exports/import-ready.csv."""
     try:
-        result = assemble_export(id_or_slug)
+        result = assemble_export(id_or_slug, skip_scryfall=skip_scryfall)
     except FileNotFoundError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)

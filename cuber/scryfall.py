@@ -80,25 +80,52 @@ def _cache_set(conn: sqlite3.Connection, name: str, data: Dict) -> None:
 
 # ── API fetch ─────────────────────────────────────────────────────────────────
 
-def _fuzzy_lookup(name: str, conn: sqlite3.Connection) -> Optional[Dict]:
-    """Fallback: look up a card by fuzzy name (handles DFCs and split cards)."""
-    time.sleep(RATE_DELAY)
+class ScryfallNetworkError(Exception):
+    """Raised when Scryfall is unreachable due to a network or timeout error."""
+    pass
+
+
+def fuzzy_lookup(name: str, conn: Optional[sqlite3.Connection] = None) -> Optional[Dict]:
+    """Look up a card by fuzzy name. Returns the card dict or None (not found).
+
+    When called without conn (external use): checks cache first and raises
+    ScryfallNetworkError on network/timeout failure.
+    When conn is passed (internal use): skips cache pre-check and swallows
+    exceptions, returning None on any failure.
+    """
+    manage_conn = conn is None
+    if manage_conn:
+        conn = _get_conn()
     try:
-        r = httpx.get(
-            f"{SCRYFALL_BASE}/cards/named",
-            params={"fuzzy": name},
-            headers=HEADERS,
-            timeout=15,
-        )
+        if manage_conn:
+            cached = _cache_get(conn, name, False)
+            if cached is not None:
+                return cached
+        time.sleep(RATE_DELAY)
+        try:
+            r = httpx.get(
+                f"{SCRYFALL_BASE}/cards/named",
+                params={"fuzzy": name},
+                headers=HEADERS,
+                timeout=15,
+            )
+        except (httpx.NetworkError, httpx.TimeoutException, OSError) as exc:
+            if manage_conn:
+                raise ScryfallNetworkError(str(exc)) from exc
+            return None
         if r.status_code == 200:
             card = r.json()
-            # Cache under both the queried name and the canonical Scryfall name
             _cache_set(conn, name, card)
             _cache_set(conn, card["name"], card)
             return card
+        return None
+    except ScryfallNetworkError:
+        raise
     except Exception:
-        pass
-    return None
+        return None
+    finally:
+        if manage_conn:
+            conn.close()
 
 
 def lookup_cards(names: List[str], refresh: bool = False) -> Tuple[List[Dict], List[str]]:
@@ -143,7 +170,7 @@ def lookup_cards(names: List[str], refresh: bool = False) -> Tuple[List[Dict], L
         # Cards not found — try fuzzy fallback (handles DFCs, split cards)
         for nf in data.get("not_found", []):
             nf_name = nf.get("name", str(nf))
-            card = _fuzzy_lookup(nf_name, conn)
+            card = fuzzy_lookup(nf_name, conn)
             if card:
                 results.append(card)
                 # Also cache under the original queried name

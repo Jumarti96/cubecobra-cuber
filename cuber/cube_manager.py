@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from .cube import CUBES_DIR, CUBECOBRA_CSV_COLUMNS, Cube, find_cube_dir
 from .cubecobra import _fetch_url
+from .scryfall import fuzzy_lookup, ScryfallNetworkError
 
 
 # ── Slug utilities ─────────────────────────────────────────────────────────────
@@ -267,11 +268,16 @@ def add_cards(
     id_or_slug: str,
     names: List[str],
     board: str = "mainboard",
+    verify: bool = True,
 ) -> Dict[str, Any]:
     """Add one or more cards as stub rows to mainboard.csv or maybeboard.csv.
 
     Always appends exactly the names given — no deduplication against existing rows.
     Pass the same name multiple times to add multiple copies.
+
+    With verify=True (default): calls Scryfall fuzzy lookup per card. Exact/fuzzy matches
+    use the canonical Scryfall name. Not-found cards are rejected. Network failures add
+    the card as an unverified stub. With verify=False: writes all names as stubs immediately.
     """
     cube_folder = find_cube_dir(id_or_slug)
     csv_filename = "mainboard.csv" if board == "mainboard" else "maybeboard.csv"
@@ -288,20 +294,51 @@ def add_cards(
 
     stub_base = {col: "" for col in fieldnames}
     added: List[str] = []
+    corrections: List[Dict[str, str]] = []
+    not_found: List[str] = []
+    unverified: List[str] = []
 
     for raw_name in names:
         name = " ".join(raw_name.strip().split())
         if not name:
             continue
-        existing_rows.append({**stub_base, "name": name})
-        added.append(name)
+
+        if not verify:
+            existing_rows.append({**stub_base, "name": name})
+            added.append(name)
+            unverified.append(name)
+            continue
+
+        try:
+            card = fuzzy_lookup(name)
+        except ScryfallNetworkError:
+            existing_rows.append({**stub_base, "name": name})
+            added.append(name)
+            unverified.append(name)
+            continue
+
+        if card is None:
+            not_found.append(name)
+            continue
+
+        canonical = card["name"]
+        if canonical.lower() != name.lower():
+            corrections.append({"input": name, "canonical": canonical})
+
+        existing_rows.append({**stub_base, "name": canonical})
+        added.append(canonical)
 
     with open(csv_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(existing_rows)
 
-    return {"added": added}
+    return {
+        "added": added,
+        "corrections": corrections,
+        "not_found": not_found,
+        "unverified": unverified,
+    }
 
 
 # ── remove-card ────────────────────────────────────────────────────────────────
@@ -493,33 +530,83 @@ def backfill_tags_to_mainboard(cube: Cube, id_or_slug: str) -> int:
     return updated
 
 
+# ── export helpers ────────────────────────────────────────────────────────────
+
+def _load_enriched_index(cube_folder: str) -> Dict[str, str]:
+    """Load enriched.json and return {name_lower: scryfall_id}. Empty dict if missing."""
+    path = os.path.join(cube_folder, "enriched.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            c["name"].strip().lower(): c["scryfall_id"]
+            for c in data.get("cards", [])
+            if c.get("scryfall_id")
+        }
+    except (json.JSONDecodeError, OSError, KeyError):
+        return {}
+
+
+def _verify_cards_scryfall(names: List[str]) -> Dict[str, List[str]]:
+    """Verify card names via live Scryfall fuzzy lookup.
+
+    Returns {"failed": [...], "network_errors": [...]}.
+    Rate delay is handled inside fuzzy_lookup.
+    """
+    failed: List[str] = []
+    network_errors: List[str] = []
+    for name in names:
+        try:
+            card = fuzzy_lookup(name)
+            if card is None:
+                failed.append(name)
+        except ScryfallNetworkError:
+            network_errors.append(name)
+    return {"failed": failed, "network_errors": network_errors}
+
+
+def _compute_enrichment_coverage(rows: List[Dict], enriched_index: Dict[str, str]) -> str:
+    """Return "N/M" where N = rows with a scryfall_id in enriched_index, M = total rows."""
+    total = len(rows)
+    covered = sum(
+        1 for r in rows
+        if enriched_index.get(r.get("name", "").strip().lower())
+    )
+    return f"{covered}/{total}"
+
+
+def _compute_rarity_delta(
+    cube_folder: str,
+    diff: Dict[str, Any],
+) -> Dict[str, Dict[str, int]]:
+    """Return per-rarity added/removed counts based on the cube_status diff."""
+    working = _load_csv_by_name(os.path.join(cube_folder, "mainboard.csv"))
+    remote = _load_csv_by_name(os.path.join(cube_folder, "remote", "mainboard.csv"))
+
+    result: Dict[str, Dict[str, int]] = {}
+    for name in diff.get("added", []):
+        row = working.get(name)
+        if row:
+            rarity = (row.get("Rarity") or "unknown").lower()
+            entry = result.setdefault(rarity, {"added": 0, "removed": 0})
+            entry["added"] += 1
+    for name in diff.get("removed", []):
+        row = remote.get(name)
+        if row:
+            rarity = (row.get("Rarity") or "unknown").lower()
+            entry = result.setdefault(rarity, {"added": 0, "removed": 0})
+            entry["removed"] += 1
+    return result
+
+
 # ── export ─────────────────────────────────────────────────────────────────────
 
 def _validate_mainboard(rows: List[Dict[str, str]]) -> Dict[str, List[str]]:
     """Run pre-flight checks on mainboard rows. Returns errors and warnings."""
     errors: List[str] = []
     warnings: List[str] = []
-
-    # Duplicate check
-    name_counts: Dict[str, int] = {}
-    for row in rows:
-        n = row.get("name", "").strip()
-        name_counts[n] = name_counts.get(n, 0) + 1
-    duplicates = [n for n, c in name_counts.items() if c > 1]
-    if duplicates:
-        sample = ", ".join(duplicates[:5]) + ("..." if len(duplicates) > 5 else "")
-        errors.append(f"{len(duplicates)} duplicate card(s): {sample}")
-
-    # Unenriched stub check — no CMC, Type, or Set means enrich hasn't run
-    stubs = [
-        r["name"].strip() for r in rows
-        if not r.get("CMC", "").strip()
-        and not r.get("Type", "").strip()
-        and not r.get("Set", "").strip()
-    ]
-    if stubs:
-        sample = ", ".join(stubs[:5]) + ("..." if len(stubs) > 5 else "")
-        errors.append(f"{len(stubs)} unenriched card(s) — run `cuber enrich` first: {sample}")
 
     # Missing collector number — only warn for cards that are enriched
     missing_cn = [
@@ -539,7 +626,7 @@ def _validate_mainboard(rows: List[Dict[str, str]]) -> Dict[str, List[str]]:
     return {"errors": errors, "warnings": warnings}
 
 
-def assemble_export(id_or_slug: str) -> Dict[str, Any]:
+def assemble_export(id_or_slug: str, skip_scryfall: bool = False) -> Dict[str, Any]:
     """Validate mainboard, assemble exports/import-ready.csv, and append to export-log.json."""
     cube_folder = find_cube_dir(id_or_slug)
     exports_dir = os.path.join(cube_folder, "exports")
@@ -560,6 +647,32 @@ def assemble_export(id_or_slug: str) -> Dict[str, Any]:
     if errors:
         return {"path": None, "card_count": 0, "errors": errors, "warnings": warnings, "diff": None, "log_path": None}
 
+    # Scryfall validation: cross-check enriched index, verify remainder live
+    enriched_index = _load_enriched_index(cube_folder)
+    missing_from_scryfall: List[str] = []
+    scryfall_network_errors: List[str] = []
+
+    if not skip_scryfall:
+        unverified = [
+            r["name"].strip() for r in rows
+            if not enriched_index.get(r["name"].strip().lower())
+        ]
+        if unverified:
+            sv = _verify_cards_scryfall(unverified)
+            missing_from_scryfall = sv["failed"]
+            scryfall_network_errors = sv["network_errors"]
+
+        if missing_from_scryfall:
+            sample = ", ".join(missing_from_scryfall[:5]) + ("..." if len(missing_from_scryfall) > 5 else "")
+            return {
+                "path": None, "card_count": 0,
+                "errors": [f"{len(missing_from_scryfall)} card(s) not found on Scryfall: {sample}"],
+                "warnings": warnings,
+                "diff": None, "log_path": None,
+            }
+        if scryfall_network_errors:
+            warnings.append(f"{len(scryfall_network_errors)} card(s) unverified (Scryfall unreachable)")
+
     diff = cube_status(id_or_slug)
 
     out_path = os.path.join(exports_dir, "import-ready.csv")
@@ -578,12 +691,31 @@ def assemble_export(id_or_slug: str) -> Dict[str, Any]:
         except (json.JSONDecodeError, OSError):
             log_entries = []
 
+    export_number = len(log_entries) + 1
+    meta_path = os.path.join(cube_folder, "meta.json")
+    cube_title = id_or_slug
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                cube_title = json.load(f).get("title", id_or_slug)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    enrichment_coverage = _compute_enrichment_coverage(rows, enriched_index)
+    rarity_delta = _compute_rarity_delta(cube_folder, diff)
+
     log_entries.insert(0, {
         "exported_at": datetime.now(timezone.utc).isoformat(),
+        "export_number": export_number,
+        "cube_title": cube_title,
         "card_count": len(rows),
         "added": diff["added"],
         "removed": diff["removed"],
         "tag_changes": len(diff["tag_changed"]),
+        "enrichment_coverage": enrichment_coverage,
+        "missing_from_scryfall": missing_from_scryfall,
+        "validation_summary": {"errors": len(errors), "warnings": len(warnings)},
+        "rarity_delta": rarity_delta,
         "warnings": warnings,
     })
     with open(log_path, "w", encoding="utf-8") as f:
@@ -596,4 +728,41 @@ def assemble_export(id_or_slug: str) -> Dict[str, Any]:
         "warnings": warnings,
         "diff": diff,
         "log_path": log_path,
+    }
+
+
+# ── swap-card ──────────────────────────────────────────────────────────────────
+
+def swap_card(
+    id_or_slug: str,
+    old_name: str,
+    new_name: str,
+    board: str = "mainboard",
+) -> Dict[str, Any]:
+    """Atomically replace old_name with new_name. Verifies new card via Scryfall first.
+
+    Returns a result dict with keys: "removed", "added", "correction" (or "error").
+    No mutation occurs if verification fails or old card is not found.
+    """
+    try:
+        card = fuzzy_lookup(new_name)
+    except ScryfallNetworkError as exc:
+        return {"error": f"Scryfall unreachable: {exc}", "network_error": True}
+
+    if card is None:
+        return {"error": f"'{new_name}' not found on Scryfall", "new_not_found": True}
+
+    canonical = card["name"]
+    correction = canonical if canonical.lower() != new_name.strip().lower() else None
+
+    remove_result = remove_cards(id_or_slug, [old_name], board=board, count=1)
+    if remove_result["not_found"]:
+        return {"error": f"'{old_name}' not found in {board}", "old_not_found": True}
+
+    add_cards(id_or_slug, [canonical], board=board, verify=False)
+
+    return {
+        "removed": old_name,
+        "added": canonical,
+        "correction": correction,
     }

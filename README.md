@@ -133,18 +133,22 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 |---------|-------------|---------|
 | `fetch <id>` | Download a public cube from CubeCobra. Creates the full project folder. | `cuber fetch obc` |
 | `fetch <id> --dry-run` | Print the CubeCobra URL without downloading. | `cuber fetch obc --dry-run` |
-| `add-card <id> <names...>` | Add one or more cards to the mainboard. Always adds exactly what you request — passing a name twice adds two copies. Stubs are hydrated on the next `enrich`. | `cuber add-card obc "Lightning Bolt" "Brainstorm"` |
+| `add-card <id> <names...>` | Add one or more cards to the mainboard. Names are verified against Scryfall by default — typos are corrected to the canonical name; unknown names are rejected. Stubs are hydrated on the next `enrich`. | `cuber add-card obc "Lightning Bolt" "Brainstorm"` |
+| `add-card <id> <names...> --no-verify` | Add cards without Scryfall verification (bulk imports with known-good names). | `cuber add-card obc --from-file known-cards.txt --no-verify` |
 | `add-card <id> <names...> --count N` | Add N copies of each named card. | `cuber add-card obc "Lightning Bolt" --count 4` |
 | `add-card <id> --from-file <path>` | Add cards from a text file (one name per line). | `cuber add-card obc --from-file new-cards.txt` |
 | `add-card <id> --stdin` | Add cards from stdin (newline-separated). | `echo "Lightning Bolt" \| cuber add-card obc --stdin` |
 | `add-card <id> <names...> --maybeboard` | Send added cards to the maybeboard instead. | `cuber add-card obc "Teferi" --maybeboard` |
+| `swap <id> <old> <new>` | Atomically replace one card with another. Verifies the new card on Scryfall before removing the old one — aborts without changes if the new card is not found or the old card isn't in the cube. | `cuber swap obc "Dark Ritual" "Cabal Ritual"` |
+| `swap <id> <old> <new> --maybeboard` | Operate on the maybeboard instead. | `cuber swap obc "Card A" "Card B" --maybeboard` |
 | `remove-card <id> <names...>` | Remove cards from the mainboard. Removes all copies of each named card by default. | `cuber remove-card obc "Lightning Bolt"` |
 | `remove-card <id> <names...> --count N` | Remove only N copies (for constructed cubes with intentional multiples). | `cuber remove-card obc "Lightning Bolt" --count 2` |
 | `remove-card <id> --from-file <path>` | Remove cards listed in a file (one name per line). | `cuber remove-card obc --from-file cuts.txt` |
 | `remove-card <id> <names...> --maybeboard` | Remove from maybeboard instead. | `cuber remove-card obc "Teferi" --maybeboard` |
 | `dedup <id>` | Remove duplicate rows, keeping one copy of each card name. | `cuber dedup obc` |
 | `status <id>` | Show cards added, removed, or retagged since last fetch. | `cuber status obc` |
-| `export <id>` | Assemble `exports/import-ready.csv` from `mainboard.csv`. Tags from `tagged.csv` are merged in if present — not required. | `cuber export obc` |
+| `export <id>` | Assemble `exports/import-ready.csv` from `mainboard.csv`. Validates all card names against Scryfall (using `enriched.json` as a cache for already-verified cards). Blocks export if any card names are not found. | `cuber export obc` |
+| `export <id> --skip-scryfall` | Skip Scryfall validation entirely (offline use). | `cuber export obc --skip-scryfall` |
 
 ### Enrichment & Tagging
 
