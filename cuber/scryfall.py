@@ -55,6 +55,13 @@ def _normalize(name: str) -> str:
     return name.strip().lower()
 
 
+def _identifier_cache_key(ident: Dict) -> str:
+    """Compute the SQLite cache key for a Scryfall identifier dict."""
+    if "collector_number" in ident and "set" in ident:
+        return f"{ident['set'].lower()}:{ident['collector_number']}"
+    return _normalize(ident.get("name", ""))
+
+
 def _cache_get(conn: sqlite3.Connection, name: str, refresh: bool) -> Optional[Dict]:
     row = conn.execute(
         "SELECT data, cached_at FROM cards WHERE name_normalized = ?",
@@ -128,31 +135,40 @@ def fuzzy_lookup(name: str, conn: Optional[sqlite3.Connection] = None) -> Option
             conn.close()
 
 
-def lookup_cards(names: List[str], refresh: bool = False) -> Tuple[List[Dict], List[str]]:
-    """Batch-lookup cards by name. Returns (found_cards, missing_names)."""
+def lookup_cards(identifiers: List[Dict], refresh: bool = False) -> Tuple[List[Dict], List[str]]:
+    """Batch-lookup cards by Scryfall identifier dicts. Returns (found_cards, missing_names).
+
+    Each identifier is one of:
+      {"name": "Lightning Bolt"}
+      {"name": "Lightning Bolt", "set": "m11"}
+      {"set": "mh3", "collector_number": "42", "_name": "Grief"}  <- _name stripped before POST
+    """
     conn = _get_conn()
     results: List[Dict] = []
-    to_fetch: List[str] = []
+    to_fetch: List[Dict] = []
+    key_to_name: Dict[str, str] = {}
     missing: List[str] = []
 
-    # Serve from cache first
-    for name in names:
-        cached = _cache_get(conn, name, refresh)
+    for ident in identifiers:
+        name = ident.get("_name") or ident.get("name", "")
+        cache_key = _identifier_cache_key(ident)
+        if name:
+            key_to_name[cache_key] = name
+
+        cached = _cache_get(conn, cache_key, refresh)
         if cached is not None:
             results.append(cached)
         else:
-            to_fetch.append(name)
+            scryfall_ident = {k: v for k, v in ident.items() if not k.startswith("_")}
+            to_fetch.append(scryfall_ident)
 
-    # Batch-fetch uncached cards
-    batch_missing: List[str] = []
     for i in range(0, len(to_fetch), BATCH_SIZE):
         batch = to_fetch[i : i + BATCH_SIZE]
-        identifiers = [{"name": n} for n in batch]
         time.sleep(RATE_DELAY)
         try:
             r = httpx.post(
                 f"{SCRYFALL_BASE}/cards/collection",
-                json={"identifiers": identifiers},
+                json={"identifiers": batch},
                 headers=HEADERS,
                 timeout=30,
             )
@@ -161,28 +177,80 @@ def lookup_cards(names: List[str], refresh: bool = False) -> Tuple[List[Dict], L
         except httpx.HTTPStatusError as e:
             raise RuntimeError(f"Scryfall API error: {e}") from e
 
-        found_names = set()
         for card in data.get("data", []):
             _cache_set(conn, card["name"], card)
+            # Also cache under set:cn key so subsequent set-pinned lookups hit cache
+            if card.get("set") and card.get("collector_number"):
+                _cache_set(conn, f"{card['set'].lower()}:{card['collector_number']}", card)
             results.append(card)
-            found_names.add(card["name"].strip().lower())
 
-        # Cards not found — try fuzzy fallback (handles DFCs, split cards)
         for nf in data.get("not_found", []):
-            nf_name = nf.get("name", str(nf))
-            card = fuzzy_lookup(nf_name, conn)
+            nf_key = _identifier_cache_key(nf)
+            nf_name = key_to_name.get(nf_key) or nf.get("name", "")
+            if "collector_number" in nf and "set" in nf and nf_name:
+                print(f"  Warning: pinned printing {nf.get('set', '').upper()} "
+                      f"#{nf.get('collector_number')} unavailable; "
+                      f"falling back to name lookup for '{nf_name}'")
+            card = fuzzy_lookup(nf_name, conn) if nf_name else None
             if card:
                 results.append(card)
-                # Also cache under the original queried name
-                _cache_set(conn, nf_name, card)
+                if nf_name:
+                    _cache_set(conn, nf_name, card)
             else:
-                batch_missing.append(nf_name)
+                missing.append(nf_name or str(nf))
 
     conn.close()
-    return results, batch_missing
+    return results, missing
 
 
 # ── Enrichment ────────────────────────────────────────────────────────────────
+
+def _build_identifier(row: Dict[str, str]) -> Dict[str, str]:
+    """Build a Scryfall identifier from a mainboard.csv row (three-tier logic).
+
+    Tier 1: set + collector_number -> exact printing pin
+    Tier 2: set only             -> name + set for set-scoped lookup
+    Tier 3: neither              -> name only (Scryfall canonical)
+    """
+    name = row.get("name", "").strip()
+    set_code = (row.get("Set") or "").strip()
+    cn = (row.get("Collector Number") or "").strip()
+
+    if set_code and cn:
+        return {"set": set_code.lower(), "collector_number": cn, "_name": name}
+    if set_code:
+        return {"name": name, "set": set_code.lower()}
+    return {"name": name}
+
+
+def _load_enriched_dict(short_id: str) -> Dict[str, Card]:
+    """Load enriched.json and return a {name_lower: Card} dict; empty dict if missing."""
+    try:
+        cube = load_enriched(short_id)
+        return {c.name.strip().lower(): c for c in cube.cards}
+    except FileNotFoundError:
+        return {}
+
+
+def _is_already_enriched(row: Dict[str, str], existing: Dict[str, Card]) -> bool:
+    """Return True if this mainboard row's card is already correctly enriched.
+
+    Checks: scryfall_id present, set matches (if specified), CN matches (if specified).
+    """
+    name = row.get("name", "").strip()
+    if not name:
+        return False
+    card = existing.get(name.lower())
+    if card is None or not card.scryfall_id:
+        return False
+    set_code = (row.get("Set") or "").strip()
+    cn = (row.get("Collector Number") or "").strip()
+    if set_code and card.set_code.lower() != set_code.lower():
+        return False
+    if cn and card.collector_number != cn:
+        return False
+    return True
+
 
 def _scryfall_to_card(row: Dict[str, str], sf: Dict[str, Any]) -> Card:
     """Merge a CubeCobra CSV row with Scryfall data into a Card."""
@@ -280,7 +348,9 @@ def _backfill_mainboard_csv(cube_folder: str, cards: List[Card]) -> int:
         row["CMC"] = cmc_str
         row["Type"] = card.type_line
         row["Color"] = "".join(card.colors)
-        row["Set"] = card.set_code.upper()
+        # Preserve user-specified Set; only write from Scryfall if row has none
+        if not row.get("Set", "").strip():
+            row["Set"] = card.set_code.upper()
         row["Collector Number"] = card.collector_number
         row["Rarity"] = card.rarity.capitalize()
         row["image URL"] = card.image_url or ""
@@ -300,41 +370,49 @@ def enrich_cube(short_id: str, refresh: bool = False) -> Cube:
     rows = load_raw_csv(short_id)
     meta = load_meta(short_id)
 
-    # Detect new cards not yet in enriched.json (stubs from add-card)
-    stub_count = 0
-    try:
-        existing = load_enriched(short_id)
-        existing_lower = {c.name.strip().lower() for c in existing.cards}
-        stub_count = sum(
-            1 for r in rows
-            if r.get("name", "").strip()
-            and r["name"].strip().lower() not in existing_lower
-        )
-    except FileNotFoundError:
-        pass
+    mainboard_rows = [r for r in rows if r.get("name", "").strip()]
 
-    names = [r["name"] for r in rows if r.get("name")]
-    print(f"Enriching {len(names)} cards via Scryfall (cache: {'bypass' if refresh else 'enabled'})...")
-    if stub_count:
-        print(f"  Hydrating {stub_count} new card(s) added via add-card...")
+    # Skip-if-enriched: partition rows into already-correct and needs-fetch
+    existing = _load_enriched_dict(short_id)
+    if refresh:
+        to_fetch_rows = mainboard_rows
+        already_enriched_cards: List[Card] = []
+    else:
+        to_fetch_rows = [r for r in mainboard_rows if not _is_already_enriched(r, existing)]
+        already_enriched_names = {
+            r["name"].strip().lower()
+            for r in mainboard_rows
+            if _is_already_enriched(r, existing)
+        }
+        already_enriched_cards = [existing[n] for n in already_enriched_names if n in existing]
 
-    sf_cards, missing = lookup_cards(names, refresh=refresh)
+    skip_count = len(mainboard_rows) - len(to_fetch_rows)
+    fetch_count = len(to_fetch_rows)
 
-    # Build a lookup by normalized name; also index DFCs by front-face name
+    print(f"Enriching {len(mainboard_rows)} cards via Scryfall (cache: {'bypass' if refresh else 'enabled'})...")
+    if skip_count and not refresh:
+        print(f"  Skipped {skip_count} (already enriched). Fetching {fetch_count} new/changed cards.")
+
+    identifiers = [_build_identifier(r) for r in to_fetch_rows]
+    if identifiers:
+        sf_cards, missing = lookup_cards(identifiers, refresh=refresh)
+    else:
+        sf_cards, missing = [], []
+
+    # Build name lookup for fetched cards; DFCs indexed by front-face name too
     sf_by_name: Dict[str, Dict] = {}
     for sf in sf_cards:
         sf_by_name[sf["name"].strip().lower()] = sf
-        # DFCs: also index by front face name so "Delver of Secrets" finds
-        # "Delver of Secrets // Insectile Aberration"
         if "card_faces" in sf and sf["card_faces"]:
             front = sf["card_faces"][0].get("name", "").strip().lower()
             if front and front not in sf_by_name:
                 sf_by_name[front] = sf
 
-    cards: List[Card] = []
+    # Start with already-enriched cards, then append newly fetched
+    cards: List[Card] = list(already_enriched_cards)
     validation_warnings: List[str] = []
 
-    for row in rows:
+    for row in to_fetch_rows:
         name = row.get("name", "").strip()
         if not name:
             continue
@@ -344,7 +422,6 @@ def enrich_cube(short_id: str, refresh: bool = False) -> Cube:
             continue
         try:
             card = _scryfall_to_card(row, sf)
-            # Validate required fields
             if not card.name or not card.scryfall_id or not card.type_line:
                 validation_warnings.append(f"Validation failed (missing fields): {name}")
                 continue
@@ -363,7 +440,6 @@ def enrich_cube(short_id: str, refresh: bool = False) -> Cube:
     path = save_enriched(cube, short_id)
     updated = _backfill_mainboard_csv(os.path.dirname(path), cards)
 
-    # Update meta
     meta["card_count"] = len(cards)
     meta["missing_cards"] = missing + [
         w.replace("Not found on Scryfall: ", "")
@@ -373,7 +449,10 @@ def enrich_cube(short_id: str, refresh: bool = False) -> Cube:
     meta["validation_warnings"] = validation_warnings
     save_meta(meta, short_id)
 
+    newly_fetched = len(cards) - len(already_enriched_cards)
     print(f"  Enriched {len(cards)} cards -> {path}")
+    if skip_count and not refresh:
+        print(f"  Skipped {skip_count} (already enriched). Fetched {newly_fetched} new/changed cards.")
     print(f"  Updated {updated} rows in mainboard.csv")
     if missing:
         print(f"  Missing ({len(missing)}): {', '.join(missing[:5])}"
