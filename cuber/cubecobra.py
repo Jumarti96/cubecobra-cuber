@@ -85,11 +85,10 @@ def fetch_cube(short_id: str, dry_run: bool = False) -> Dict[str, Any]:
     card_count = max(0, content.count("\n") - 1)  # rough count (minus header)
 
     meta: Dict[str, Any] = {
-        "short_id": short_id,
-        "cube_id": short_id,  # updated to UUID if available
+        "id": short_id,
         "title": title,
         "url": csv_url,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "card_count": card_count,
         "missing_cards": [],
         "schema_warning": False,
@@ -178,11 +177,11 @@ def fetch_set(
 
     meta: Dict[str, Any] = {
         "title": title,
-        "short_id": set_code,
+        "id": set_code,
         "slug": set_code,
         "format": "",
         "owner": "",
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "card_count": len(cards),
         "missing_cards": [],
         "schema_warning": None,

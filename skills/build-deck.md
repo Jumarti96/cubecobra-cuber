@@ -1,6 +1,6 @@
 # /build-deck — Cube Deck Builder
 
-Build a deck from a locally cached cube in any supported format. Cards must come only from the cube pool. A self-grill gate runs before the final list is shown. Both the deck and a human-readable CSV are saved when you confirm.
+Build a deck from a locally cached cube in any supported format. Cards must come only from the cube pool. A self-grill gate runs before the final list is shown. The deck is saved as deck.json, deck.csv, deck.mwDeck, and analysis.md in a per-deck subfolder when you confirm.
 
 ---
 
@@ -230,34 +230,70 @@ Attack the deck independently:
 
 ## Phase 9: Present Final Deck
 
-Display the full list as a table, grouped by slot category:
+Display the deck using the enforced format below. **Section order is strict — do not reorder.**
 
 ```
-═══════════════════════════════════════════════════════════════
-DECK: {name}  |  {format}  |  {colors}  |  {card count} cards
-═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════
+DECK: {name}  |  {format}  |  {colors}  |  {N} cards
+═══════════════════════════════════════════════════════════════════
 
-MAINBOARD ({N})
-──────────────────────────────────────────────────────────────
-Card                              Board  Role            Rarity  Oracle excerpt
-Lightning Bolt                    main   Removal         Common  "deals 3 damage to any target"
-...
+{Deck identity — 2–4 sentences of prose describing strategy and key interactions.}
+
+MAINBOARD ({spells} spells + {lands} lands = {total})
+──────────────────────────────────────────────────────────────────
+
+LANDS ({N})
+  Nx BasicLand
+  Nx DualLand          Brief note (e.g. "BR dual, enters tapped")
+  ...
+
+CREATURES ({N})
+CMC  Card                    Qty   Role                    Rar
+  1  Vexing Devil            x1    Turn-1 threat           R
+  2  Asylum Visitor          x2    Card engine             U
+  ...
+
+INSTANTS & SORCERIES ({N})
+CMC  Card                    Qty   Role                    Rar
+  1  Lightning Axe           x2    Removal/Discard outlet  U
+  ...
+
+OTHER SPELLS ({N})
+CMC  Card                    Qty   Role                    Rar
+  3  Stensia Masquerade      x1    Combat pump             U
+  ...
 
 SIDEBOARD ({N})
-──────────────────────────────────────────────────────────────
-Card                              Board  Role            Rarity  Oracle excerpt
-Tormod's Crypt                    side   GY hate         Uncommon "exile all cards from target..."
+──────────────────────────────────────────────────────────────────
+Card                    Qty   Role / When to board in          Rar
+Tragic Slip             x2    Recursive threats, morbid         C
+Abrade                  x2    Artifacts + creatures             U
 ...
 
-MANA AUDIT
-──────────────────────────────────────────────────────────────
-{format_audit_report output}
+── ANALYSIS ───────────────────────────────────────────────────────
+{Write freely here. No structure constraints. This is where you
+surface the most interesting strategic observations about the deck:
+synergy interactions, mechanical calculations (e.g. madness trigger
+counts, flashback enabler counts), matchup notes, play patterns,
+key card interactions. Use tables when they add clarity. Minimum
+one substantive observation; there is no maximum.}
+
+MANA AUDIT: {PASS/WARN/FAIL}
+──────────────────────────────────────────────────────────────────
+{format_audit_report output — use deck_audit.format_audit_report(audit)}
 
 RESTRICTIONS COMPLIANCE
-──────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────────
 {checklist of each restriction with pass/fail}
-═══════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════
 ```
+
+**Format rules:**
+- `OTHER SPELLS` covers enchantments, artifacts, planeswalkers, sagas — omit the section if empty
+- `INSTANTS & SORCERIES` is one section; do not split instants from sorceries
+- No oracle excerpt column in any card table section
+- The `── ANALYSIS ──` section is always present; write at least one observation even for simple decks
+- Rarity abbreviation: C Common, U Uncommon, R Rare, M Mythic
 
 Ask: **"Save this deck? [y/N]"**
 
@@ -265,14 +301,19 @@ Ask: **"Save this deck? [y/N]"**
 
 ## Phase 10: Save
 
-On confirmation, prompt for a deck name if not already provided.
+On confirmation, prompt for a deck name if not already provided. Sanitize to a filesystem-safe slug (lowercase, alphanumeric + hyphens).
 
-**Write deck.json** to `cubes/<id>/decks/<name>.json`:
+All four files go into a single subfolder: `cubes/<id>/decks/<name>/`
+
+---
+
+**Write deck.json** using the Write tool to `cubes/<id>/decks/<name>/deck.json`:
 ```json
 {
   "deck_name": "bg-graveyard",
-  "cube_short_id": "obc",
-  "built_at": "...",
+  "cube_id": "551c6382-d024-4039-8fce-1cf9c23135b3",
+  "cube_slug": "innistrad-remastered-set-dmu-dual-lands",
+  "built_at": "2026-05-20T14:30:00Z",
   "format": "40-card",
   "strategy": "graveyard midrange",
   "colors": "BG",
@@ -280,21 +321,64 @@ On confirmation, prompt for a deck name if not already provided.
   "restrictions": { ... },
   "commander": null,
   "mana_audit": { ... },
-  "mainboard": [ {card dicts...} ],
-  "sideboard": [ {card dicts...} ]
+  "mainboard": [ {card dicts, board: "mainboard"} ],
+  "sideboard": [ {card dicts, board: "sideboard"} ]
 }
 ```
 
-**Write deck.csv** to `cubes/<id>/decks/<name>.csv`:
-Use CUBECOBRA_CSV_COLUMNS column order. Mark mainboard cards with `board=main`, sideboard with `board=side`.
+JSON rules:
+- `cube_id`: the UUID from `meta.json` (`id` field)
+- `cube_slug`: the slug from `meta.json` (`slug` field)
+- `built_at`: ISO 8601 UTC, second precision, Z suffix — `"2026-05-20T14:30:00Z"`
+- Card `board` values: `"mainboard"` / `"sideboard"` (full words, never `"main"` or `"side"`)
+- `mana_audit` must include: `land_count`, `recommended_land_count`, `land_count_status`, `ramp_count`, `avg_cmc`, `pip_demand`, `land_color_production`, `color_balance_status`, `color_balance_per_color`, `overall_status`
 
-Use the Write tool for both files (apostrophes in card names break shell quoting).
+Use the Write tool (apostrophes in card names break shell quoting).
 
-Confirm both paths:
+---
+
+**Write deck.csv** using the Write tool to `cubes/<id>/decks/<name>/deck.csv`:
+Use CUBECOBRA_CSV_COLUMNS column order. Mark mainboard cards with `board=mainboard`, sideboard with `board=sideboard`.
+
+---
+
+**Write deck.mwDeck** using `exporter.write_mwdeck(mainboard, sideboard, short_id, deck_name)`:
+The function writes to `cubes/<id>/decks/<name>/deck.mwDeck` automatically.
+
+---
+
+**Write analysis.md** using `exporter.write_deck_analysis_md(analysis_text, short_id, deck_name, frontmatter)`:
+
+The `analysis_text` is the full Phase 9 output reformatted as Markdown:
+- Section headers use `##` (e.g. `## MAINBOARD`)
+- Card tables are in fenced code blocks (``` ``` ```) to preserve monospace alignment
+- The `── ANALYSIS ──` zone body is rendered as free Markdown (not in a code block)
+- In the CREATURES / INSTANTS & SORCERIES / OTHER SPELLS / SIDEBOARD tables AND in the ANALYSIS zone, wrap non-basic card names as Scryfall search links: `[Card Name](https://scryfall.com/search?q=!"Card+Name")`
+- Basic land names (Plains, Island, Swamp, Mountain, Forest, Wastes) are plain text — no links
+
+The `frontmatter` dict:
+```python
+{
+    "deck_name": deck_name,
+    "cube_id": cube_id,       # UUID from meta.json
+    "cube_slug": cube_slug,   # slug from meta.json
+    "colors": colors,         # e.g. "BR"
+    "format": format,         # e.g. "40-card"
+    "built_at": built_at,     # same timestamp as deck.json
+    "mana_audit_status": audit["overall_status"],    # "PASS" / "WARN" / "FAIL"
+    "restrictions_status": "PASS",  # or "FAIL" if any check failed
+}
+```
+
+---
+
+Confirm all four paths:
 ```
 Saved:
-  cubes/<id>/decks/<name>.json
-  cubes/<id>/decks/<name>.csv
+  cubes/<id>/decks/<name>/deck.json
+  cubes/<id>/decks/<name>/deck.csv
+  cubes/<id>/decks/<name>/deck.mwDeck
+  cubes/<id>/decks/<name>/analysis.md
 ```
 
 ---
@@ -312,4 +396,4 @@ Saved:
 | Verify card exists | Search `enriched.json` cards[] by exact name |
 | Read oracle text | `card.oracle_text` from enriched.json — never training data |
 | Tag density analysis | `tagged.csv` tags column, grouped by color_identity |
-| Write deck files | Write tool → `cubes/<id>/decks/<name>.json` and `.csv` |
+| Write deck files | Write tool → `cubes/<id>/decks/<name>/deck.json` and `deck.csv`. `exporter.write_mwdeck()` → `deck.mwDeck`. `exporter.write_deck_analysis_md()` → `analysis.md` |

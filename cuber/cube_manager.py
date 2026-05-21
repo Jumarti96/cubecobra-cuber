@@ -178,11 +178,11 @@ def fetch_and_disassemble(short_id: str, dry_run: bool = False) -> Dict[str, Any
     # meta.json
     meta: Dict[str, Any] = {
         "title": title,
-        "short_id": short_id,
+        "id": short_id,
         "slug": slug,
         "format": cube_json.get("type", ""),
         "owner": cube_json.get("owner", ""),
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "card_count": len(mainboard_cards),
         "missing_cards": [],
         "schema_warning": None,
@@ -240,11 +240,11 @@ def _fetch_csv_only(short_id: str) -> Dict[str, Any]:
     card_count = max(0, content.count("\n") - 1)
     meta: Dict[str, Any] = {
         "title": short_id,
-        "short_id": short_id,
+        "id": short_id,
         "slug": slug,
         "format": "",
         "owner": "",
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "card_count": card_count,
         "missing_cards": [],
         "schema_warning": None,
