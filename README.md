@@ -90,6 +90,22 @@ Then in CubeCobra: **your cube → List tab → Export → Replace with CSV Impo
 
 ---
 
+## How Enrich Works
+
+`cuber enrich` reads `mainboard.csv` and fetches Scryfall data for each card using a three-tier identifier strategy:
+
+1. **Set + Collector Number** (`Set=MH3`, `Collector Number=42`) → fetched as `{set: "mh3", collector_number: "42"}`. Locks in the exact printing.
+2. **Set only** (`Set=M11`, no Collector Number) → fetched as `{name: "Lightning Bolt", set: "m11"}`. Constrains to the correct set.
+3. **Name only** → fetched as `{name: "Counterspell"}`. Scryfall's canonical printing is used.
+
+**Skip-if-enriched:** Cards already in `enriched.json` with a matching `scryfall_id` (and matching set/CN if specified) are skipped — no Scryfall call is made for them. This makes re-enriching after a card swap fast. The output reports how many were skipped vs. fetched: `Skipped 500 (already enriched). Fetched 40 new/changed cards.`
+
+**`--refresh`** bypasses all skip logic and re-fetches every card from Scryfall.
+
+**Set column preservation:** `_backfill_mainboard_csv` never overwrites a non-empty `Set` column in `mainboard.csv`. Your intended set codes survive every enrich run.
+
+---
+
 ## Cube Project Structure
 
 After fetching, each cube lives under `cubes/` in a folder named after the cube's title (the slug). Commands accept either the **short ID** (e.g. `obc`) or the **title slug** (e.g. `my-vintage-cube`) — short ID is tried as a folder name first, then looked up in `meta.json`.
@@ -154,11 +170,19 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `enrich <id>` | Look up each card on Scryfall; hydrate stubs from `add-card`. Auto-fetches if needed. | `cuber enrich obc` |
-| `enrich <id> --refresh` | Re-fetch Scryfall data for all cards (bypass 7-day cache). | `cuber enrich obc --refresh` |
+| `enrich <id>` | Look up each card on Scryfall; hydrate stubs from `add-card`. Auto-fetches if needed. Respects `Set` and `Collector Number` columns to lock in the intended printing. Skips cards that are already correctly enriched. | `cuber enrich obc` |
+| `enrich <id> --refresh` | Re-fetch Scryfall data for all cards, ignoring existing enriched state (bypass 7-day cache). | `cuber enrich obc --refresh` |
 | `stats <id>` | Print color, CMC, rarity, and type distributions. Writes `analysis.json`. | `cuber stats obc` |
 | `tag <id>` | AI-tag all cards using oracle text. Writes `tagged.csv`. Requires LLM config. | `cuber tag obc` |
 | `tag <id> --overwrite` | Replace existing tags instead of merging. | `cuber tag obc --overwrite` |
+| `search <id>` | Search the local enriched card pool by any combination of criteria. | `cuber search obc --color B --type creature` |
+| `search <id> --color W,U` | Filter by color identity (subset match). | `cuber search obc --color W,U` |
+| `search <id> --type <str>` | Substring match on type line. | `cuber search obc --type instant` |
+| `search <id> --cmc-min N --cmc-max N` | CMC range filter (inclusive). | `cuber search obc --cmc-min 1 --cmc-max 2` |
+| `search <id> --oracle <pattern>` | Regex search on oracle text (case-insensitive). | `cuber search obc --oracle "draw a card"` |
+| `search <id> --tag <tag>` | Filter by functional tag; comma-separate to require multiple. | `cuber search obc --tag removal` |
+| `search <id> --rarity <r>` | Exact rarity match: common/uncommon/rare/mythic. | `cuber search obc --rarity rare` |
+| `search <id> --limit N` | Cap results at N (default 25). | `cuber search obc --type creature --limit 50` |
 
 ### Utilities
 

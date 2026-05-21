@@ -12,6 +12,7 @@ import typer
 from . import scryfall, stats as stats_mod, exporter, tagger, cubecobra
 from .cube import CUBES_DIR, find_cube_dir, load_cube_from_mainboard_csv, load_enriched, load_meta, save_enriched
 from .cube_manager import fetch_and_disassemble, add_cards, remove_cards, dedup_mainboard, cube_status, assemble_export, backfill_tags_to_mainboard, swap_card
+from .cube_search import load_merged_pool, search_pool, format_search_results
 
 app = typer.Typer(
     name="cuber",
@@ -439,6 +440,41 @@ def list_cubes():
             f"{str(r['card_count']):<{col_w[3]}}  "
             f"{str(r['fetched_at']):<{col_w[4]}}"
         )
+
+
+@app.command()
+def search(
+    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    color: Optional[str] = typer.Option(None, "--color", help="Color identity filter, e.g. W,U,B"),
+    card_type: Optional[str] = typer.Option(None, "--type", help="Substring match on type line, e.g. creature"),
+    cmc_min: Optional[float] = typer.Option(None, "--cmc-min", help="Minimum CMC (inclusive)"),
+    cmc_max: Optional[float] = typer.Option(None, "--cmc-max", help="Maximum CMC (inclusive)"),
+    oracle: Optional[str] = typer.Option(None, "--oracle", help="Regex pattern against oracle text"),
+    tag: Optional[str] = typer.Option(None, "--tag", help="Tag filter; comma-separated, all must match"),
+    rarity: Optional[str] = typer.Option(None, "--rarity", help="Exact rarity match: common/uncommon/rare/mythic"),
+    limit: int = typer.Option(25, "--limit", help="Maximum number of results to show"),
+):
+    """Search the local enriched card pool by any combination of criteria."""
+    try:
+        pool = load_merged_pool(id_or_slug)
+    except FileNotFoundError:
+        typer.echo(f"enriched.json not found — run cuber enrich {id_or_slug} first", err=True)
+        raise typer.Exit(1)
+
+    color_identity = [c.strip().upper() for c in color.split(",")] if color else None
+    tags = [t.strip() for t in tag.split(",")] if tag else None
+
+    results = search_pool(
+        pool,
+        color_identity=color_identity,
+        oracle_pattern=oracle,
+        card_type=card_type,
+        cmc_min=cmc_min,
+        cmc_max=cmc_max,
+        tags=tags,
+        rarity=rarity,
+    )
+    typer.echo(format_search_results(results, limit=limit))
 
 
 @app.command()
