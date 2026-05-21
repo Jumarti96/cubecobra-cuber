@@ -284,10 +284,7 @@ MANA AUDIT: {PASS/WARN/FAIL}
 
 RESTRICTIONS COMPLIANCE
 ──────────────────────────────────────────────────────────────────
-  ✓ Rares used: {list} ({N} of {max} allowed)
-  ✓ Mythic used: {list} ({N} of {max} allowed)
-  ✓ All commons/uncommons ≤ {N} copies
-  ✓ Sideboard = {N} cards
+{checklist of each restriction with pass/fail}
 ═══════════════════════════════════════════════════════════════════
 ```
 
