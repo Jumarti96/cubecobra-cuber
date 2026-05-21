@@ -108,8 +108,11 @@ cubes/
     tagged.csv             ← cards with AI functional tags (auto-generated)
     analysis.json          ← statistics from last `stats` run (auto-generated)
     decks/
-      aggro-rg.json        ← deck built by /build-deck
-      aggro-rg.csv         ← same deck as a human-readable CSV
+      aggro-rg/            ← deck built by /build-deck (one folder per deck)
+        deck.json          ← full deck data (cards, mana audit, restrictions)
+        deck.csv           ← same deck as a human-readable CSV
+        deck.mwDeck        ← Magic Workstation format for MTGO import
+        analysis.md        ← deck analysis with YAML frontmatter (dashboard-ready)
     exports/
       import-ready.csv     ← assembled by `cuber export`, upload this to CubeCobra
 ```

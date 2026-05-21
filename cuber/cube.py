@@ -41,7 +41,7 @@ def find_cube_dir(id_or_slug: str) -> str:
             try:
                 with open(meta_path, encoding="utf-8") as f:
                     meta = json.load(f)
-                if meta.get("short_id") == id_or_slug:
+                if (meta.get("id") or meta.get("short_id")) == id_or_slug:
                     return entry.path
             except (json.JSONDecodeError, OSError):
                 continue
@@ -182,8 +182,7 @@ class Cube:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "cube_id": self.cube_id,
-            "short_id": self.short_id,
+            "id": self.short_id,
             "title": self.title,
             "fetched_at": self.fetched_at,
             "cards": [c.to_dict() for c in self.cards],
@@ -191,9 +190,10 @@ class Cube:
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "Cube":
+        _id = d.get("id") or d.get("short_id", "")
         return Cube(
-            short_id=d.get("short_id", ""),
-            cube_id=d.get("cube_id", ""),
+            short_id=_id,
+            cube_id=d.get("cube_id") or _id,
             title=d.get("title", ""),
             fetched_at=d.get("fetched_at", ""),
             cards=[Card.from_dict(c) for c in d.get("cards", [])],
@@ -255,9 +255,10 @@ def load_cube_from_mainboard_csv(id_or_slug: str) -> Cube:
             mtgo_id=row.get("MTGO ID") or None,
         ))
 
+    _id = meta.get("id") or meta.get("short_id", id_or_slug)
     return Cube(
-        short_id=meta.get("short_id", id_or_slug),
-        cube_id=meta.get("short_id", id_or_slug),
+        short_id=_id,
+        cube_id=_id,
         title=meta.get("title", id_or_slug),
         fetched_at=meta.get("fetched_at", ""),
         cards=cards,

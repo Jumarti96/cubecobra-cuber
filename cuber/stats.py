@@ -22,7 +22,7 @@ def compute_stats(cube: Cube) -> Dict[str, Any]:
     card_types = _card_type_breakdown(cards)
 
     return {
-        "cube_short_id": cube.short_id,
+        "cube_id": cube.cube_id or cube.short_id,
         "cube_title": cube.title,
         "total_cards": len(cards),
         "color_distribution": color_dist,

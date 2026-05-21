@@ -327,9 +327,9 @@ def enrich_cube(short_id: str, refresh: bool = False) -> Cube:
 
     cube = Cube(
         short_id=short_id,
-        cube_id=meta.get("cube_id", short_id),
+        cube_id=meta.get("id") or meta.get("cube_id") or short_id,
         title=meta.get("title", short_id),
-        fetched_at=meta.get("fetched_at", datetime.now(timezone.utc).isoformat()),
+        fetched_at=meta.get("fetched_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")),
         cards=cards,
     )
 
