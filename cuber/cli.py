@@ -11,7 +11,7 @@ import typer
 
 from . import scryfall, stats as stats_mod, exporter, tagger, cubecobra
 from .cube import CUBES_DIR, find_cube_dir, load_cube_from_mainboard_csv, load_enriched, load_meta, save_enriched
-from .cube_manager import fetch_and_disassemble, add_cards, remove_cards, dedup_mainboard, cube_status, assemble_export, backfill_tags_to_mainboard, swap_card
+from .cube_manager import fetch_and_disassemble, add_cards, remove_cards, dedup_mainboard, cube_status, assemble_export, backfill_tags_to_mainboard, swap_card, add_cards_from_package
 from .cube_search import load_merged_pool, search_pool, format_search_results
 
 app = typer.Typer(
@@ -19,6 +19,9 @@ app = typer.Typer(
     help="Local cube management toolkit for CubeCobra.",
     no_args_is_help=True,
 )
+
+packages_app = typer.Typer(name="packages", help="Browse and import CubeCobra packages.", no_args_is_help=True)
+app.add_typer(packages_app, name="packages")
 
 
 @app.command()
@@ -64,8 +67,18 @@ def enrich(
 @app.command()
 def stats(
     id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    color: bool = typer.Option(False, "--color", help="Show color identity chart"),
+    cmc: bool = typer.Option(False, "--cmc", help="Show CMC distribution chart"),
+    rarity: bool = typer.Option(False, "--rarity", help="Show rarity chart"),
+    types: bool = typer.Option(False, "--types", help="Show card type chart"),
+    guild: bool = typer.Option(False, "--guild", help="Show guild breakdown chart"),
+    show_all: bool = typer.Option(False, "--all", help="Show all charts (color, CMC, rarity, types, creature, guild)"),
+    by: Optional[str] = typer.Option(None, "--by", help="Cross-breakdown dimension: color, color-category, rarity, type, creature, guild"),
+    metric: Optional[str] = typer.Option(None, "--metric", help="Cross-breakdown metric: cmc, power, toughness"),
+    json_out: bool = typer.Option(False, "--json", help="Write exports/analysis.json"),
+    md: bool = typer.Option(False, "--md", help="Write exports/analysis.md with Markdown tables"),
 ):
-    """Print color/type/rarity/CMC distributions and write analysis.json."""
+    """Print cube stats with Unicode bar charts. Default shows 5 key charts."""
     try:
         cube = load_cube_from_mainboard_csv(id_or_slug)
     except FileNotFoundError as e:
@@ -73,13 +86,75 @@ def stats(
         raise typer.Exit(1)
 
     s = stats_mod.compute_stats(cube)
-    tag_data = stats_mod.compute_tag_density(cube)
 
-    typer.echo(stats_mod.format_stats_report(s))
-    typer.echo(stats_mod.format_tag_density_report(tag_data))
+    # Try to load enriched.json for CMC summary and cross-breakdown
+    cmc_values = None
+    enriched_cards = None
+    try:
+        enriched_cube = load_enriched(id_or_slug)
+        enriched_cards = [c for c in enriched_cube.cards if c.board == "mainboard"]
+        cmc_values = [float(c.cmc) for c in enriched_cards]
+    except FileNotFoundError:
+        pass
 
-    path = stats_mod.write_analysis_json({**s, "tag_density": tag_data}, id_or_slug)
-    typer.echo(f"Full output: {path}")
+    # Cross-breakdown
+    if by:
+        if by not in stats_mod.CROSS_DIMENSIONS:
+            typer.echo(
+                f"Unknown --by value '{by}'. Choose from: {', '.join(sorted(stats_mod.CROSS_DIMENSIONS))}",
+                err=True,
+            )
+            raise typer.Exit(1)
+        if not metric:
+            typer.echo("--metric is required with --by. Choose from: cmc, power, toughness", err=True)
+            raise typer.Exit(1)
+        if metric not in stats_mod.CROSS_METRICS:
+            typer.echo(
+                f"Unknown --metric value '{metric}'. Choose from: {', '.join(sorted(stats_mod.CROSS_METRICS))}",
+                err=True,
+            )
+            raise typer.Exit(1)
+        if enriched_cards is None:
+            typer.echo(
+                f"Cross-breakdown requires enriched data — run cuber enrich {id_or_slug} first",
+                err=True,
+            )
+            raise typer.Exit(1)
+        bd = stats_mod.compute_cross_breakdown(enriched_cards, by, metric)
+        typer.echo(stats_mod.format_cross_breakdown(bd, by, metric))
+
+    # Charts — always show unless --by used without any chart flags
+    chart_flags_active = any([color, cmc, rarity, types, guild])
+    show_charts = (not by) or chart_flags_active or show_all
+
+    if show_charts:
+        if show_all:
+            chart_list: Optional[List[str]] = ["color", "cmc", "rarity", "types", "creature", "guild"]
+        elif chart_flags_active:
+            chart_list = (
+                (["color"] if color else [])
+                + (["cmc"] if cmc else [])
+                + (["rarity"] if rarity else [])
+                + (["types"] if types else [])
+                + (["guild"] if guild else [])
+            )
+        else:
+            chart_list = None  # default 5 charts
+
+        typer.echo(stats_mod.format_stats_report(s, cmc_values=cmc_values, charts=chart_list))
+
+        if chart_list is None and not by:
+            tag_data = stats_mod.compute_tag_density(cube)
+            typer.echo(stats_mod.format_tag_density_report(tag_data))
+
+    if json_out:
+        tag_data = stats_mod.compute_tag_density(cube)
+        path = stats_mod.write_analysis_json({**s, "tag_density": tag_data}, id_or_slug)
+        typer.echo(f"Analysis JSON: {path}")
+
+    if md:
+        path = stats_mod.write_analysis_md(s, id_or_slug)
+        typer.echo(f"Analysis Markdown: {path}")
 
 
 @app.command()
@@ -532,3 +607,89 @@ def diff(
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
     typer.echo(f"\nFull output: {out_path}")
+
+
+# ── Packages ──────────────────────────────────────────────────────────────────
+
+@packages_app.command("search")
+def packages_search(
+    keywords: str = typer.Argument("", help="Keywords to search for (leave empty for popular packages)"),
+    show_cards: bool = typer.Option(False, "--show-cards", help="List card names under each package"),
+):
+    """List CubeCobra packages. Shows popular packages when no keywords given."""
+    try:
+        packages = cubecobra.fetch_packages(keywords=keywords)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    if not packages:
+        if keywords:
+            typer.echo(f'No packages found for "{keywords}".')
+        else:
+            typer.echo("No packages found.")
+        return
+
+    col_id = 8
+    col_title = 34
+    col_cards = 6
+    col_votes = 6
+    header = f"{'ID':<{col_id}}  {'Title':<{col_title}}  {'Cards':>{col_cards}}  {'Votes':>{col_votes}}"
+    typer.echo(header)
+    typer.echo("-" * (col_id + col_title + col_cards + col_votes + 6))
+
+    for pkg in packages:
+        pkg_id = (pkg.get("_id") or pkg.get("id") or "")[:col_id]
+        title = (pkg.get("title") or pkg.get("name") or "")[:col_title]
+        card_count = len(pkg.get("cards") or [])
+        votes = pkg.get("votes") or pkg.get("voteCount") or 0
+        typer.echo(f"{pkg_id:<{col_id}}  {title:<{col_title}}  {card_count:>{col_cards}}  {votes:>{col_votes}}")
+
+        if show_cards:
+            for card in (pkg.get("cards") or []):
+                name = card.get("name") if isinstance(card, dict) else str(card)
+                typer.echo(f"    {name}")
+
+
+@app.command("add-package")
+def add_package_cmd(
+    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    package_id: str = typer.Argument(..., help="CubeCobra package ID"),
+    allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Add cards even if already in cube"),
+):
+    """Fetch a CubeCobra package and add all its cards to the cube."""
+    try:
+        pkg = cubecobra.fetch_package_by_id(package_id)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    if pkg is None:
+        typer.echo(f"Package '{package_id}' not found on CubeCobra.", err=True)
+        raise typer.Exit(1)
+
+    title = pkg.get("title") or pkg.get("name") or package_id
+    pkg_cards = pkg.get("cards") or []
+    typer.echo(f"Package: {title} ({len(pkg_cards)} cards)")
+
+    try:
+        result = add_cards_from_package(id_or_slug, pkg_cards, allow_duplicates=allow_duplicates)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    if result["added"]:
+        typer.echo(f"\nAdded ({len(result['added'])}):")
+        for name in result["added"]:
+            typer.echo(f"  + {name}")
+
+    if result["skipped_existing"]:
+        typer.echo(f"\nSkipped — already in cube ({len(result['skipped_existing'])}):")
+        for name in result["skipped_existing"][:10]:
+            typer.echo(f"  = {name}")
+        if len(result["skipped_existing"]) > 10:
+            typer.echo(f"  ... and {len(result['skipped_existing']) - 10} more")
+
+    typer.echo(f"\nEnriched {result['enriched_count']} card(s) in enriched.json.")
+    if result["added"]:
+        typer.echo(f"Run `cuber export {id_or_slug}` to assemble import-ready.csv.")

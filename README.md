@@ -122,7 +122,6 @@ cubes/
     maybeboard.csv         ← your working maybeboard
     enriched.json          ← Scryfall-enriched card data (auto-generated)
     tagged.csv             ← cards with AI functional tags (auto-generated)
-    analysis.json          ← statistics from last `stats` run (auto-generated)
     decks/
       aggro-rg/            ← deck built by /build-deck (one folder per deck)
         deck.json          ← full deck data (cards, mana audit, restrictions)
@@ -131,6 +130,8 @@ cubes/
         analysis.md        ← deck analysis with YAML frontmatter (dashboard-ready)
     exports/
       import-ready.csv     ← assembled by `cuber export`, upload this to CubeCobra
+      analysis.json        ← stats snapshot (written by `cuber stats --json`)
+      analysis.md          ← stats as Markdown tables (written by `cuber stats --md`)
 ```
 
 **`remote/` is the last known CubeCobra state — never edit it.** Your edits go into the working files. `cuber status` shows the diff between remote and working. `cuber export` assembles the upload file when you're done.
@@ -172,7 +173,16 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 |---------|-------------|---------|
 | `enrich <id>` | Look up each card on Scryfall; hydrate stubs from `add-card`. Auto-fetches if needed. Respects `Set` and `Collector Number` columns to lock in the intended printing. Skips cards that are already correctly enriched. | `cuber enrich obc` |
 | `enrich <id> --refresh` | Re-fetch Scryfall data for all cards, ignoring existing enriched state (bypass 7-day cache). | `cuber enrich obc --refresh` |
-| `stats <id>` | Print color, CMC, rarity, and type distributions. Writes `analysis.json`. | `cuber stats obc` |
+| `stats <id>` | Print color, CMC, rarity, and type distributions (5 Unicode bar charts by default). No file written unless `--json` or `--md` is specified. | `cuber stats obc` |
+| `stats <id> --color` | Show only the color identity chart. Multiple flags can be combined. | `cuber stats obc --color --rarity` |
+| `stats <id> --cmc` | Show only the CMC distribution chart (includes mean/median/stdev if enriched). | `cuber stats obc --cmc` |
+| `stats <id> --rarity` | Show only the rarity breakdown chart. | `cuber stats obc --rarity` |
+| `stats <id> --types` | Show only the card type chart. | `cuber stats obc --types` |
+| `stats <id> --guild` | Show multicolor guild breakdown (all 10 2-color pairs + 3+ color). | `cuber stats obc --guild` |
+| `stats <id> --all` | Show all charts: 5 defaults + guild breakdown. | `cuber stats obc --all` |
+| `stats <id> --by <dim> --metric <m>` | Cross-breakdown table: group by dimension, show mean/median/stdev/count/sum of metric. Requires `enriched.json`. Dimensions: `color`, `color-category`, `rarity`, `type`, `creature`, `guild`. Metrics: `cmc`, `power`, `toughness`. | `cuber stats obc --by color --metric cmc` |
+| `stats <id> --json` | Write `exports/analysis.json` (also prints charts to terminal). | `cuber stats obc --json` |
+| `stats <id> --md` | Write `exports/analysis.md` with YAML frontmatter and Markdown tables (also prints charts). | `cuber stats obc --md` |
 | `tag <id>` | AI-tag all cards using oracle text. Writes `tagged.csv`. Requires LLM config. | `cuber tag obc` |
 | `tag <id> --overwrite` | Replace existing tags instead of merging. | `cuber tag obc --overwrite` |
 | `search <id>` | Search the local enriched card pool by any combination of criteria. | `cuber search obc --color B --type creature` |
@@ -183,6 +193,16 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 | `search <id> --tag <tag>` | Filter by functional tag; comma-separate to require multiple. | `cuber search obc --tag removal` |
 | `search <id> --rarity <r>` | Exact rarity match: common/uncommon/rare/mythic. | `cuber search obc --rarity rare` |
 | `search <id> --limit N` | Cap results at N (default 25). | `cuber search obc --type creature --limit 50` |
+
+### Packages
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `packages search` | List popular CubeCobra packages (most votes first). | `cuber packages search` |
+| `packages search <keywords>` | Search packages by keyword. Shows ID (truncated), title, card count, vote count. | `cuber packages search "removal"` |
+| `packages search <keywords> --show-cards` | Also print card names under each package. | `cuber packages search "shocklands" --show-cards` |
+| `add-package <id> <package-id>` | Fetch a CubeCobra package by ID and add all its cards to the cube's mainboard. Cards arrive pre-enriched — no separate `enrich` run needed. Skips cards already in the cube by default. | `cuber add-package obc e3fd8469-e67a-4844-92c5-933bb3dd54fc` |
+| `add-package <id> <package-id> --allow-duplicates` | Add all package cards even if already in the cube. | `cuber add-package obc <id> --allow-duplicates` |
 
 ### Utilities
 

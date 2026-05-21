@@ -10,7 +10,7 @@ import shutil
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from .cube import CUBES_DIR, CUBECOBRA_CSV_COLUMNS, Cube, find_cube_dir
+from .cube import CUBES_DIR, CUBECOBRA_CSV_COLUMNS, Card, Cube, find_cube_dir, load_enriched, save_enriched, cube_dir, load_meta
 from .cubecobra import _fetch_url
 from .scryfall import fuzzy_lookup, ScryfallNetworkError
 
@@ -732,6 +732,193 @@ def assemble_export(id_or_slug: str, skip_scryfall: bool = False) -> Dict[str, A
 
 
 # ── swap-card ──────────────────────────────────────────────────────────────────
+
+# ── add-package ────────────────────────────────────────────────────────────────
+
+def _package_card_to_csv_row(card: Dict[str, Any]) -> Dict[str, str]:
+    """Map a CubeCobra package card (Scryfall schema) to a CSV row."""
+    ci = card.get("color_identity") or []
+    if isinstance(ci, str):
+        ci = list(ci)
+    colors = card.get("colors") or ci
+    if isinstance(colors, str):
+        colors = list(colors)
+    try:
+        cmc_int = str(int(float(card.get("cmc") or 0)))
+    except (TypeError, ValueError):
+        cmc_int = ""
+    type_line = card.get("type_line") or card.get("type") or ""
+    image_url = card.get("image_normal") or (card.get("image_uris") or {}).get("normal") or ""
+    color_cat = card.get("color_category") or card.get("colorCategory") or ""
+    if not color_cat:
+        if len(ci) == 0:
+            color_cat = "C"
+        elif len(ci) > 1:
+            color_cat = "M"
+        else:
+            color_cat = ci[0] if ci else ""
+    return {
+        "name": card.get("name") or "",
+        "CMC": cmc_int,
+        "Type": type_line,
+        "Color": "".join(colors),
+        "Set": (card.get("set") or "").upper(),
+        "Collector Number": card.get("collector_number") or "",
+        "Rarity": (card.get("rarity") or "").capitalize(),
+        "Color Category": color_cat,
+        "status": card.get("status") or "",
+        "Finish": card.get("finish") or "Non-Foil",
+        "board": "mainboard",
+        "maybeboard": "false",
+        "image URL": image_url,
+        "image Back URL": "",
+        "tags": ";".join(str(t) for t in (card.get("tags") or []) if t),
+        "Notes": card.get("notes") or "",
+        "MTGO ID": "",
+        "Custom": "false",
+        "Voucher": "false",
+    }
+
+
+def _package_card_to_enriched_card(card: Dict[str, Any]) -> Card:
+    """Convert a CubeCobra package card (Scryfall schema) to a Card dataclass."""
+    ci = card.get("color_identity") or []
+    if isinstance(ci, str):
+        ci = list(ci)
+    colors = card.get("colors") or list(ci)
+    if isinstance(colors, str):
+        colors = list(colors)
+    try:
+        cmc = float(card.get("cmc") or 0)
+    except (TypeError, ValueError):
+        cmc = 0.0
+    type_line = card.get("type_line") or card.get("type") or ""
+    image_url = card.get("image_normal") or (card.get("image_uris") or {}).get("normal") or ""
+    color_cat = card.get("color_category") or card.get("colorCategory") or ""
+    if not color_cat:
+        if len(ci) == 0:
+            color_cat = "C"
+        elif len(ci) > 1:
+            color_cat = "M"
+        else:
+            color_cat = ci[0] if ci else ""
+    scryfall_id = card.get("scryfall_id") or card.get("_id") or card.get("id") or ""
+    return Card(
+        name=card.get("name") or "",
+        scryfall_id=scryfall_id,
+        cmc=cmc,
+        type_line=type_line,
+        color_identity=ci,
+        oracle_text=card.get("oracle_text") or "",
+        rarity=(card.get("rarity") or "").lower(),
+        set_code=(card.get("set") or "").lower(),
+        collector_number=card.get("collector_number") or "",
+        color_category=color_cat,
+        board="mainboard",
+        finish=card.get("finish") or "Non-Foil",
+        status=card.get("status") or "",
+        image_url=image_url,
+        colors=colors,
+        power=card.get("power"),
+        toughness=card.get("toughness"),
+        mana_cost=card.get("mana_cost"),
+        tags=[str(t) for t in (card.get("tags") or []) if t],
+    )
+
+
+def add_cards_from_package(
+    id_or_slug: str,
+    package_cards: List[Dict[str, Any]],
+    allow_duplicates: bool = False,
+) -> Dict[str, Any]:
+    """Add cards from a CubeCobra package to mainboard.csv and upsert into enriched.json.
+
+    Returns {"added": [...], "skipped_existing": [...], "enriched_count": int}.
+    """
+    cube_folder = find_cube_dir(id_or_slug)
+    csv_path = os.path.join(cube_folder, "mainboard.csv")
+
+    existing_rows: List[Dict] = []
+    fieldnames = list(CUBECOBRA_CSV_COLUMNS)
+
+    if os.path.exists(csv_path):
+        with open(csv_path, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            fieldnames = list(reader.fieldnames or CUBECOBRA_CSV_COLUMNS)
+            existing_rows = list(reader)
+
+    existing_names_lower = {r.get("name", "").strip().lower() for r in existing_rows if r.get("name")}
+
+    added: List[str] = []
+    skipped_existing: List[str] = []
+    new_rows: List[Dict] = []
+    enriched_cards_to_add: List[Card] = []
+
+    for pkg_card in package_cards:
+        name = (pkg_card.get("name") or "").strip()
+        if not name:
+            continue
+        name_lower = name.lower()
+        if not allow_duplicates and name_lower in existing_names_lower:
+            skipped_existing.append(name)
+            continue
+        new_rows.append(_package_card_to_csv_row(pkg_card))
+        enriched_cards_to_add.append(_package_card_to_enriched_card(pkg_card))
+        added.append(name)
+        existing_names_lower.add(name_lower)
+
+    if new_rows:
+        with open(csv_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(existing_rows + new_rows)
+
+    # Upsert into enriched.json
+    enriched_count = 0
+    if enriched_cards_to_add:
+        enriched_path = os.path.join(cube_folder, "enriched.json")
+        if os.path.exists(enriched_path):
+            try:
+                enriched_cube = load_enriched(id_or_slug)
+            except (FileNotFoundError, Exception):
+                meta = load_meta(id_or_slug)
+                _id = meta.get("id") or meta.get("short_id") or id_or_slug
+                enriched_cube = Cube(
+                    short_id=_id,
+                    cube_id=_id,
+                    title=meta.get("title", id_or_slug),
+                    fetched_at=meta.get("fetched_at", ""),
+                    cards=[],
+                )
+        else:
+            meta = load_meta(id_or_slug)
+            _id = meta.get("id") or meta.get("short_id") or id_or_slug
+            enriched_cube = Cube(
+                short_id=_id,
+                cube_id=_id,
+                title=meta.get("title", id_or_slug),
+                fetched_at=meta.get("fetched_at", ""),
+                cards=[],
+            )
+
+        existing_enriched = {c.name.strip().lower(): i for i, c in enumerate(enriched_cube.cards)}
+        for card in enriched_cards_to_add:
+            key = card.name.strip().lower()
+            if key in existing_enriched:
+                enriched_cube.cards[existing_enriched[key]] = card
+            else:
+                enriched_cube.cards.append(card)
+                existing_enriched[key] = len(enriched_cube.cards) - 1
+            enriched_count += 1
+
+        save_enriched(enriched_cube, id_or_slug)
+
+    return {
+        "added": added,
+        "skipped_existing": skipped_existing,
+        "enriched_count": enriched_count,
+    }
+
 
 def swap_card(
     id_or_slug: str,
