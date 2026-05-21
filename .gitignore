@@ -37,3 +37,6 @@ Thumbs.db
 
 # Local context files (design AI, notes)
 .context-*.md
+
+# OpenSpec planning workspace (local only)
+openspec/

@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -260,3 +260,56 @@ def _color_category(card: Dict[str, Any]) -> str:
     if len(ci) > 1:
         return "M"
     return ci[0]
+
+
+# ── Packages API ──────────────────────────────────────────────────────────────
+
+def fetch_packages(keywords: str = "", max_pages: int = 3) -> List[Dict[str, Any]]:
+    """Fetch CubeCobra packages via POST /packages/getmore. Paginates up to max_pages."""
+    url = f"{BASE_URL}/packages/getmore"
+    packages: List[Dict[str, Any]] = []
+    last_key = None
+
+    for _ in range(max_pages):
+        body: Dict[str, Any] = {"lastKey": last_key, "keywords": keywords}
+        try:
+            r = httpx.post(url, json=body, headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"Error fetching packages: {e}") from e
+
+        page_packages = data.get("packages") or []
+        packages.extend(page_packages)
+
+        last_key = data.get("lastKey")
+        if not last_key or not page_packages:
+            break
+
+    return packages
+
+
+def fetch_package_by_id(package_id: str, max_pages: int = 10) -> Optional[Dict[str, Any]]:
+    """Find a CubeCobra package by ID by paginating through fetch_packages. Returns None if not found."""
+    url = f"{BASE_URL}/packages/getmore"
+    last_key = None
+
+    for _ in range(max_pages):
+        body: Dict[str, Any] = {"lastKey": last_key, "keywords": ""}
+        try:
+            r = httpx.post(url, json=body, headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"Error fetching packages: {e}") from e
+
+        page_packages = data.get("packages") or []
+        for pkg in page_packages:
+            if pkg.get("_id") == package_id or pkg.get("id") == package_id:
+                return pkg
+
+        last_key = data.get("lastKey")
+        if not last_key or not page_packages:
+            break
+
+    return None
