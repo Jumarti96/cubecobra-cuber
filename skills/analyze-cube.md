@@ -1,3 +1,7 @@
+---
+name: analyze-cube
+description: Produce a full statistics dashboard for a locally cached cube
+---
 # /analyze-cube — Cube Statistics Dashboard
 
 Produce a full statistics dashboard for a locally cached cube: color distribution, CMC curve, rarity, card types, and archetype tag density. All metrics are **informational** — no distribution triggers a warning or error.

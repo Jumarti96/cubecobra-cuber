@@ -1,14 +1,17 @@
-"""Merged card pool loader and multi-criteria search."""
+"""Merged card pool loader, multi-criteria search, draft pool support, and copy policy."""
 
 from __future__ import annotations
 
 import csv
 import os
 import re
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from .cube import find_cube_dir, load_enriched
 
+
+# ── Pool loaders ────────────────────────────────────────────────────────────
 
 def load_merged_pool(id_or_slug: str) -> List[Dict[str, Any]]:
     """Load enriched.json cards and merge functional tags from tagged.csv.
@@ -45,10 +48,145 @@ def load_merged_pool(id_or_slug: str) -> List[Dict[str, Any]]:
     return pool
 
 
+def _parse_draft_pool_text(text: str) -> Counter:
+    """Parse a multiline draft pool text into {card_name: count}.
+
+    Supports:
+      - One card per line
+      - Comma-separated list
+      - "Nx Card Name" format
+    """
+    counts: Counter = Counter()
+    # Split by newline or comma
+    raw_items = re.split(r"[\n,]", text)
+    for item in raw_items:
+        item = item.strip()
+        if not item:
+            continue
+        # Check for "Nx " prefix
+        m = re.match(r"^(\d+)x?\s+(.+)", item, re.IGNORECASE)
+        if m:
+            qty = int(m.group(1))
+            name = m.group(2).strip()
+        else:
+            qty = 1
+            name = item
+        counts[name] += qty
+    return counts
+
+
+def load_draft_pool(
+    id_or_slug: str,
+    draft_text: Optional[str] = None,
+    draft_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Load a draft pool and return matching cards from the cube.
+
+    Priority:
+      1. draft_text (inline pasted text)
+      2. draft_path (path to .txt or .csv file)
+
+    Returns only cards present in the draft pool, with a `max_available`
+    field set to the quantity drafted.
+    """
+    full_pool = load_merged_pool(id_or_slug)
+    full_index = {c["name"]: c for c in full_pool}
+
+    # Resolve source
+    if draft_text:
+        pool_counts = _parse_draft_pool_text(draft_text)
+    elif draft_path and os.path.exists(draft_path):
+        ext = os.path.splitext(draft_path)[1].lower()
+        if ext == ".csv":
+            pool_counts = _parse_draft_csv(draft_path)
+        else:
+            with open(draft_path, encoding="utf-8") as f:
+                pool_counts = _parse_draft_pool_text(f.read())
+    else:
+        raise FileNotFoundError(f"Draft pool file not found: {draft_path}")
+
+    result = []
+    for name, qty in pool_counts.items():
+        card = full_index.get(name)
+        if card is None:
+            # Try case-insensitive match
+            for k, v in full_index.items():
+                if k.lower() == name.lower():
+                    card = v
+                    break
+        if card is None:
+            continue
+        card_copy = dict(card)
+        card_copy["max_available"] = qty
+        result.append(card_copy)
+
+    return result
+
+
+def _parse_draft_csv(path: str) -> Counter:
+    """Parse a CubeCobra-style CSV with name and quantity columns."""
+    counts: Counter = Counter()
+    with open(path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row.get("name", "").strip()
+            if not name:
+                continue
+            qty_str = row.get("quantity") or row.get("qty") or "1"
+            try:
+                qty = int(qty_str)
+            except ValueError:
+                qty = 1
+            counts[name] += qty
+    return counts
+
+
+# ── Copy policy helper ───────────────────────────────────────────────────────
+
+def get_max_copies(
+    card: Dict[str, Any],
+    copies_policy: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Return the maximum number of copies allowed for this card.
+
+    Resolution order:
+      1. per_card override
+      2. per_rarity override
+      3. cube_actual (enriched.json count, or draft pool max_available)
+      4. Default fallback = 4
+    """
+    if copies_policy is None:
+        copies_policy = {}
+
+    name = card.get("name", "")
+    rarity = (card.get("rarity") or "").lower()
+
+    # 1. per_card override
+    per_card = copies_policy.get("per_card", {})
+    if name in per_card:
+        return per_card[name]
+
+    # 2. per_rarity override
+    per_rarity = copies_policy.get("per_rarity", {})
+    if rarity in per_rarity:
+        return per_rarity[rarity]
+
+    # 3. cube_actual / draft pool
+    if "max_available" in card:
+        return card["max_available"]
+
+    # 4. Default
+    default = copies_policy.get("default", 4)
+    return default
+
+
+# ── Search ───────────────────────────────────────────────────────────────────
+
 def search_pool(
     pool: List[Dict[str, Any]],
     *,
     color_identity: Optional[List[str]] = None,
+    splash_color_identity: Optional[List[str]] = None,
     oracle_pattern: Optional[str] = None,
     card_type: Optional[str] = None,
     cmc_min: Optional[float] = None,
@@ -60,6 +198,10 @@ def search_pool(
     """Filter a merged card pool by any combination of criteria.
 
     color_identity: cards whose CI is a subset of these colors (e.g. ["W", "U"])
+    splash_color_identity: if provided, also include splash-eligible cards.
+      A card is splash-eligible if:
+        - Its CI contains exactly 1 color not in color_identity
+        - It has ≤ 2 pips of the off-color OR CMC ≥ 4 OR has kicker/hybrid
     oracle_pattern: regex applied to oracle_text (case-insensitive)
     card_type: substring match against type_line (e.g. "Creature", "Instant")
     cmc_min/cmc_max: inclusive CMC range filter
@@ -72,8 +214,26 @@ def search_pool(
         if card.get("board", "mainboard") != board:
             continue
         if color_identity is not None:
-            ci = card.get("color_identity") or []
-            if not set(ci).issubset(set(color_identity)):
+            ci = set(card.get("color_identity") or [])
+            core_colors = set(color_identity)
+            in_core = ci.issubset(core_colors)
+            if not in_core and splash_color_identity is not None:
+                # Check splash eligibility
+                allowed = set(splash_color_identity)
+                all_allowed = core_colors | allowed
+                if not ci.issubset(all_allowed):
+                    continue
+                off_color = ci - core_colors
+                if len(off_color) != 1:
+                    continue
+                # Splash criteria: ≤ 2 off-color pips OR CMC ≥ 4 OR kicker
+                cmc = float(card.get("cmc") or 0)
+                mana_cost = card.get("mana_cost") or ""
+                off_pips = sum(1 for c in mana_cost if c in str(off_color))
+                has_kicker = "kicker" in [t.lower() for t in (card.get("tags") or [])]
+                if not (off_pips <= 2 or cmc >= 4 or has_kicker):
+                    continue
+            elif not in_core:
                 continue
         if oracle_pattern is not None:
             oracle = card.get("oracle_text") or ""

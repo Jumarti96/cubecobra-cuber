@@ -1,3 +1,7 @@
+---
+name: suggest-cube
+description: Analyze an existing cube and propose specific card swaps
+---
 # /suggest-cube — Cube Improvement Advisor
 
 Analyze an existing cube, identify weaknesses, propose specific card swaps, and produce an updated `tagged.csv` ready for CubeCobra import. Uses a self-grill gate before presenting recommendations.

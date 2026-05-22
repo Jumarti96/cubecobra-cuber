@@ -1,3 +1,7 @@
+---
+name: tag-cube
+description: Tag every card in a locally cached cube by functional role
+---
 # /tag-cube — AI Functional Tagger
 
 Tag every card in a locally cached cube by functional role, using oracle text as the only source of truth. Writes a `tagged.csv` ready to upload to CubeCobra.
