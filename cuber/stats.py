@@ -1,4 +1,4 @@
-"""Statistics engine — color, CMC, rarity, type, guild, cross-breakdown, and tag density."""
+"""Statistics engine — color, CMC, rarity, type, guild, cross-breakdown, tag density, and archetype clusters."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .cube import Cube, cube_dir
+from .tagger import SPEED_TAGS, ENGINE_TAGS
 
 COLOR_LABELS = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
 
@@ -87,6 +88,80 @@ def compute_tag_density(cube: Cube) -> Dict[str, Any]:
         "low_density_tags": [t for t, n in tag_counts.items() if n < 3],
         "has_tags": bool(tag_counts),
     }
+
+
+def compute_archetype_clusters(cube: Cube) -> Dict[str, Any]:
+    """Compute (speed, engine) archetype pairs from card tags.
+
+    An archetype is a (speed_tag, engine_tag) pair.
+    A card contributes to an archetype if it has BOTH the speed tag AND the engine tag.
+
+    Support thresholds (proportional to total mainboard cards):
+      - Sparse:   <  5% of pool
+      - Supported:  5% to < 10%
+      - Strong:    ≥ 10%
+    """
+    cards = [c for c in cube.cards if c.board == "mainboard"]
+    total = len(cards) or 1
+
+    # Gather all (speed, engine) pairs found on individual cards
+    archetype_counts: Dict[str, Dict[str, Any]] = {}
+    for card in cards:
+        card_speeds = [t for t in card.tags if t in SPEED_TAGS]
+        card_engines = [t for t in card.tags if t in ENGINE_TAGS]
+        for speed in card_speeds:
+            for engine in card_engines:
+                key = f"{speed}-{engine}"
+                if key not in archetype_counts:
+                    archetype_counts[key] = {"speed": speed, "engine": engine, "count": 0}
+                archetype_counts[key]["count"] += 1
+
+    # Classify support level
+    clusters = []
+    for key, data in archetype_counts.items():
+        count = data["count"]
+        pct = count / total * 100
+        if pct >= 10:
+            support = "strong"
+        elif pct >= 5:
+            support = "supported"
+        else:
+            support = "sparse"
+        clusters.append({
+            "name": key,
+            "speed": data["speed"],
+            "engine": data["engine"],
+            "count": count,
+            "pct": round(pct, 1),
+            "support": support,
+        })
+
+    # Sort by count descending
+    clusters.sort(key=lambda x: -x["count"])
+
+    return {
+        "clusters": clusters,
+        "speed_distribution": _speed_distribution(cards),
+        "engine_distribution": _engine_distribution(cards),
+    }
+
+
+def _speed_distribution(cards: list) -> Dict[str, int]:
+    counts: Dict[str, int] = {s: 0 for s in SPEED_TAGS}
+    for card in cards:
+        for tag in card.tags:
+            if tag in counts:
+                counts[tag] += 1
+    return counts
+
+
+def _engine_distribution(cards: list) -> Dict[str, int]:
+    counts: Dict[str, int] = {e: 0 for e in ENGINE_TAGS}
+    for card in cards:
+        for tag in card.tags:
+            if tag in counts:
+                counts[tag] += 1
+    return counts
 
 
 def compute_cross_breakdown(cards: list, dimension: str, metric: str) -> Dict[str, Any]:
@@ -325,6 +400,21 @@ def _format_guild_chart(guild_data: Dict[str, int]) -> str:
     return "\n".join(lines)
 
 
+def _format_archetype_clusters(clusters: List[Dict[str, Any]], total: int) -> str:
+    lines = ["\nARCHETYPE CLUSTERS (speed + engine)", "-" * 50]
+    max_c = max((c["count"] for c in clusters), default=1)
+    w = _bar_width()
+    for c in clusters:
+        note = f" [{c['support']}]"
+        lines.append(
+            f"  {c['name']:<28} {_bar(c['count'], max_c, w)} {c['count']:>3} ({c['pct']:>5.1f}%){note}"
+        )
+    lines.append("")
+    lines.append("Support thresholds: strong ≥10%, supported 5-9.9%, sparse <5%")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # ── Report assembly ───────────────────────────────────────────────────────────
 
 _DEFAULT_CHARTS = ("color", "cmc", "rarity", "types", "creature")
@@ -498,6 +588,17 @@ def write_analysis_md(stats: Dict[str, Any], short_id: str) -> str:
         lines.append("|-------|------:|")
         for key, label in guild_names.items():
             lines.append(f"| {label} | {guild.get(key, 0)} |")
+        lines.append("")
+
+    # Archetype clusters
+    archetypes = stats.get("archetype_clusters")
+    if archetypes and archetypes.get("clusters"):
+        lines.append("## Archetype Clusters")
+        lines.append("")
+        lines.append("| Archetype | Count | % | Support |")
+        lines.append("|-----------|------:|--:|:--------|")
+        for c in archetypes["clusters"]:
+            lines.append(f"| {c['name']} | {c['count']} | {c['pct']}% | {c['support']} |")
         lines.append("")
 
     with open(path, "w", encoding="utf-8") as f:

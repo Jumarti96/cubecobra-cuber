@@ -1,4 +1,4 @@
-"""AI tagger — assigns functional tags to cards based on oracle text."""
+"""AI tagger — assigns speed, engine, and support tags to cards based on oracle text."""
 
 from __future__ import annotations
 
@@ -9,28 +9,25 @@ from typing import Any, Dict, List, Optional
 from . import llm
 from .cube import Card, Cube
 
-FUNCTIONAL_TAGS = [
-    # Card selection & economy
-    "card-draw", "card-advantage", "looting", "tutor", "discard",
-    # Interaction
-    "removal", "creature-removal", "artifact-removal", "enchantment-removal",
-    "board-wipe", "counterspell", "bounce", "protection",
-    # Mana
-    "ramp", "land-fetch", "mana-rock", "mana-dork",
-    # Threats & payoffs
-    "evasion", "haste-enabler", "lord", "lifegain", "mill",
-    # Enablers
-    "graveyard", "sacrifice", "token", "engine", "land",
-]
+# ── Three-Tag Taxonomy ────────────────────────────────────────────────────────
+#
+# SPEED_TAGS    — how fast the card wants the game to end (at least one required)
+# ENGINE_TAGS   — what mechanical synergy the card enables (optional)
+# SUPPORT_TAGS  — what the card does mechanically (optional, functional)
+#
+# An archetype is a (speed, engine) pair. A card contributes to an archetype
+# if it carries BOTH the speed tag AND the engine tag.
 
-ARCHETYPE_TAGS = [
-    # Core strategies
+SPEED_TAGS = [
     "aggro",        # fast damage, low curve — haste creatures, burn, early attackers
+    "tempo",        # cheap threats + bounce/counter disruption
     "control",      # board wipes, hard counters, mass removal, late-game answers
+    "midrange",     # efficient threats, removal, grind out value
     "combo",        # assembles a specific synergy to win
     "storm",        # storm count or cast-many-spells payoffs
-    "tempo",        # cheap threats + bounce/counter disruption
+]
 
+ENGINE_TAGS = [
     # Graveyard strategies
     "reanimator",   # puts fatties in graveyard; resurrects them
     "flashback",    # casting spells from graveyard (flashback, escape, aftermath)
@@ -67,62 +64,103 @@ ARCHETYPE_TAGS = [
     "angels",       # angel tribal
     "elementals",   # elemental tribal
     "merfolk",      # merfolk tribal
+    "soldiers",     # soldier tribal
+
+    # Core enablers that double as engines
+    "sacrifice",
+    "graveyard",
+    "token",
+    "engine",
+    "land",
 ]
 
-CANONICAL_TAGS = FUNCTIONAL_TAGS + ARCHETYPE_TAGS
+SUPPORT_TAGS = [
+    # Card selection & economy
+    "card-draw", "card-advantage", "looting", "tutor", "discard",
+    # Interaction
+    "removal", "creature-removal", "artifact-removal", "enchantment-removal",
+    "board-wipe", "counterspell", "bounce", "protection",
+    # Mana
+    "ramp", "land-fetch", "mana-rock", "mana-dork",
+    # Threats & payoffs
+    "evasion", "haste-enabler", "lord", "lifegain", "mill",
+]
 
-_archetype_groups = """  Core: aggro, control, combo, storm, tempo
-  Graveyard: reanimator, flashback, delirium
-  Synergy/engine: blink, aristocrats, stax, spells-matter, lands-matter,
-    artifacts-matter, enchantress, counters, wheels, voltron,
-    domain, historic, sagas, morph, kicker
-  Tribal (use specific type when applicable, "tribal" otherwise):
-    tribal, dragons, vampires, zombies, spirits, werewolves,
-    humans, elves, goblins, faeries, angels, elementals, merfolk"""
+CANONICAL_TAGS = SPEED_TAGS + ENGINE_TAGS + SUPPORT_TAGS
+
+# ── Prompt helpers ────────────────────────────────────────────────────────────
+
+_speed_tag_lines = "\n".join(f"  {t}" for t in SPEED_TAGS)
+_engine_tag_lines = "\n".join(f"  {t}" for t in ENGINE_TAGS)
+_support_tag_lines = "\n".join(f"  {t}" for t in SUPPORT_TAGS)
 
 SYSTEM_PROMPT = f"""You are a Magic: The Gathering card tagger.
 
 IRON RULE: Never assume what a card does from prior knowledge.
 All tagging decisions MUST be grounded in the oracle text provided in the input.
 
-Assign tags from two categories:
+Assign tags from THREE categories:
 
-FUNCTIONAL TAGS — what the card does mechanically:
-{', '.join(FUNCTIONAL_TAGS)}
+1. SPEED TAGS — how fast the card wants the game to end (REQUIRED: assign at least one per card):
+{_speed_tag_lines}
 
-ARCHETYPE TAGS — which draft archetypes this card enables or fits into:
-{_archetype_groups}
+2. ENGINE TAGS — what mechanical synergy or archetype this card enables or fits into:
+{_engine_tag_lines}
+
+3. SUPPORT TAGS — what the card does mechanically (interaction, card advantage, mana, etc.):
+{_support_tag_lines}
 
 Guidelines:
-- A card may carry tags from both categories (e.g. Gravecrawler: ["aggro", "aristocrats", "graveyard"])
-- Assign archetype tags liberally — a card can fit multiple archetypes
-- Only assign an archetype tag when oracle text clearly supports that strategy, not just because the card is generically good
-- For tribal tags: use the specific subtype tag (e.g. "zombies") when the card references that type explicitly; use "tribal" for generic typal support
-- flashback covers any mechanic that casts from the graveyard (escape, aftermath, retrace, jump-start)
-- delirium: assign when oracle text says "four or more card types" or "delirium"
-- domain: assign when oracle text rewards having multiple basic land types
-- historic: assign when oracle text says "historic" (artifacts + legendaries + sagas)
-- You may add a tag not in the list if strongly warranted by oracle text
+- EVERY card that is playable must receive at least ONE speed tag.
+- A card may have MULTIPLE speed tags if it functions in multiple speeds (e.g., a cheap haste creature that also has a late-game activated ability can be both "aggro" and "midrange").
+- Assign engine tags liberally — a card can fit multiple archetypes, but only when oracle text clearly supports that strategy.
+- For tribal tags: use the specific subtype tag (e.g., "zombies") when the card references that type explicitly; use "tribal" for generic typal support.
+- flashback covers any mechanic that casts from the graveyard (escape, aftermath, retrace, jump-start).
+- delirium: assign when oracle text says "four or more card types" or "delirium".
+- domain: assign when oracle text rewards having multiple basic land types.
+- historic: assign when oracle text says "historic" (artifacts + legendaries + sagas).
+- You may add a tag not in the list if strongly warranted by oracle text.
 
-aggro — STRICT: only assign when oracle text shows at least one of:
-  • A creature with haste at CMC ≤ 3 (attacks the turn it enters)
-  • A creature at CMC ≤ 2 with first strike, double strike, or menace
-  • A spell that deals direct damage to players or "any target" (burn)
-  • A combat trick granting +power AND evasion or haste at CMC ≤ 2
-  • An effect that grants haste to multiple creatures you control
+Speed-tag criteria (ground every assignment in oracle text):
 
-control — STRICT: only assign when oracle text shows at least one of:
-  • A board wipe (destroys or exiles multiple permanents simultaneously)
-  • An unconditional counterspell (no "unless they pay {{X}}" clause)
+aggro — at least one of:
+  • Creature with haste at CMC ≤ 3
+  • Creature at CMC ≤ 2 with first strike, double strike, or menace
+  • Spell that deals direct damage to players or "any target" (burn)
+  • Combat trick granting +power AND evasion or haste at CMC ≤ 2
+  • Effect that grants haste to multiple creatures you control
+
+tempo — at least one of:
+  • Creature at CMC ≤ 3 with evasion (flying, unblockable, etc.)
+  • Cheap disruption spell (counter, bounce, tap) at CMC ≤ 2
+  • Creature with flash at CMC ≤ 3
+
+control — at least one of:
+  • Board wipe (destroys or exiles multiple permanents simultaneously)
+  • Unconditional counterspell (no "unless they pay {{X}}" clause)
   • Draws 3 or more cards as the primary effect
   • Mass removal or resource denial affecting all opponents
   • Gains control of one or more permanents
 
+midrange — at least one of:
+  • Efficient creature at CMC 3-5 with card advantage or removal attached
+  • Recursion or grind effect (return from graveyard, draw when creature dies)
+  • Flexible removal that also provides a body or card
+
+combo — at least one of:
+  • Enables casting many spells in one turn (rituals, cost reduction)
+  • Tutor for specific card types
+  • Repeats an effect or untaps permanents
+
+storm — at least one of:
+  • Storm keyword or mechanic that counts spells cast
+  • Cost reduction for spells to enable chaining
+
 Respond ONLY with a JSON object mapping card names to arrays of tags.
 Example:
 {{
-  "Lightning Bolt": ["removal", "creature-removal", "aggro", "tempo"],
-  "Llanowar Elves": ["ramp", "mana-dork", "elves"],
+  "Lightning Bolt": ["aggro", "tempo", "removal", "creature-removal"],
+  "Llanowar Elves": ["midrange", "ramp", "mana-dork", "elves"],
   "Gravecrawler": ["aggro", "aristocrats", "graveyard", "zombies"]
 }}
 
@@ -130,6 +168,8 @@ If a card's oracle text is empty or does not clearly map to any tag, return an e
 Do NOT add any explanation outside the JSON object.
 """
 
+
+# ── Functions ─────────────────────────────────────────────────────────────────
 
 def build_tagging_prompt(cards_batch: List[Card]) -> List[Dict[str, str]]:
     """Build system + user messages for a batch of cards."""
@@ -155,7 +195,7 @@ def build_tagging_prompt(cards_batch: List[Card]) -> List[Dict[str, str]]:
 
 
 def _parse_response(response: str, batch: List[Card]) -> Dict[str, List[str]]:
-    """Parse LLM JSON response into {name: [tags]} dict."""
+    """Parse LLM JSON response into {{name: [tags]}} dict."""
     # Strip markdown code fences if present
     text = re.sub(r"```(?:json)?\s*", "", response).strip().rstrip("`").strip()
     try:

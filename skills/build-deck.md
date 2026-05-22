@@ -1,3 +1,7 @@
+---
+name: build-deck
+description: Build a deck from a locally cached cube in any supported format
+---
 # /build-deck — Cube Deck Builder
 
 Build a deck from a locally cached cube in any supported format. Cards must come only from the cube pool. A self-grill gate runs before the final list is shown. The deck is saved as deck.json, deck.csv, deck.mwDeck, and analysis.md in a per-deck subfolder when you confirm.
@@ -64,6 +68,67 @@ Thread restrictions through every subsequent phase.
 ## Phase 2: Deck Identity
 
 Read `cubes/<id>/enriched.json` and `cubes/<id>/tagged.csv` using `cube_search.load_merged_pool(id)`.
+
+### Step 0: Environment Profile
+
+**Run this first, before any color analysis.**
+
+Check for an existing cube analysis file in either location (try both):
+- `cubes/<slug>/exports/analysis.json`
+- `cubes/<slug>/analysis.json`
+
+If neither exists, run `cuber stats <id> --json` to generate it, then read the result.
+
+From the analysis file, extract the following signals:
+
+**Color distribution** — is the cube balanced across colors, or skewed toward certain identities? A cube with 30%+ colorless cards may have a strong artifacts theme regardless of color choice.
+
+**Dominant archetype tags** — what are the top 5 tags by card count across the entire cube? These define what the environment rewards, independent of the user's color restrictions.
+
+**Multicolor environment signals** — check for the following in the cube-wide tag list and land pool:
+- `domain` tag density ≥ 10% of non-land cards → **domain environment**: 4-5 color decks are potentially viable if fixing supports it
+- Lands that produce 3 or more colors (filter `enriched.json` lands by `len(color_identity) >= 3`) → **universal fixing present**: 3+ color decks are structurally supported
+- `kicker` tag density ≥ 10% → **kicker environment**: multicolor breadth matters less; prioritize on-color efficiency
+
+Produce an **Environment Characterization** sentence before proceeding:
+> "Balanced draft environment with strong graveyard and spells-matter themes; domain signal present (12% tag density) but universal fixing absent — 3-color is achievable, 4-5 requires explicit fixing."
+
+**Color count escalation rules** (apply when user says "surprise me" or "best strategy"):
+
+| Color count | Escalate when |
+|-------------|--------------|
+| 2-color | Default — always evaluate first |
+| 3-color | Fixing is GOOD for the trio (≥ 2 common duals covering each pair) |
+| 4-color | Domain signal present AND ≥ 3 common duals covering most pairs, OR universal fixing (3+ color lands) present |
+| 5-color | Domain signal strong (≥ 15% tag density) AND universal fixing present, OR user explicitly requested it |
+
+Never recommend a higher color count solely because the tag pool is larger. Fixing supportability must justify the jump.
+
+### Step 1: Mana Infrastructure Inventory
+
+**Run after the Environment Profile.** Read all lands from `enriched.json` where `board == "mainboard"`. Group non-basic lands by the number of colors they produce and their rarity.
+
+Display a dual land table covering all color pairs present:
+
+```
+Dual Land Inventory
+──────────────────────────────────────────────────────────────
+Color Pair   Common Duals              Rare Duals (if any)
+WU           Idyllic Beachfront        Adarkar Wastes
+UR           Molten Tributary          Shivan Reef
+...
+3+ color     Crystal Grotto (C)        Thran Portal (R)
+```
+
+For each **candidate color combination** being evaluated:
+- Count freely accessible duals at **common** rarity: 0 = no fixing, 1 = minimal, 2+ = solid
+- Count duals at **rare** rarity: note whether available under the user's restrictions
+- Count lands producing 3+ colors: each one supports all trios/quads that overlap its identity
+- Assign a fixing score: **GOOD** (≥ 2 common duals per color pair in the combination), **THIN** (1 common dual or 1+ unrestricted rare dual per pair), **NONE** (0 accessible duals for at least one pair)
+
+Factor fixing scores into the identity recommendation alongside tag density. A combination with GOOD fixing and SUPPORTED tags may outperform a combination with STRONG tags but NONE fixing. Never recommend a color combination without stating its fixing score.
+
+### Step 2: Pool and Tag Density
 
 Build the available pool: all cards where `board == "mainboard"` and color identity is a subset of the chosen colors.
 

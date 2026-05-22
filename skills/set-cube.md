@@ -1,3 +1,7 @@
+---
+name: set-cube
+description: Create a cube from all cards in a Magic: The Gathering retail set
+---
 # /set-cube — Build a Cube from a Retail MTG Set
 
 Create a cube from all (or a filtered subset of) cards in a given Magic: The Gathering retail set. Identifies mechanical themes, assesses draft viability, and optionally suggests cuts to reach a target size.

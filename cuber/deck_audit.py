@@ -14,6 +14,11 @@ _ADD_ANY_RE = re.compile(
     r"Add (?:one mana of any color|[a-z]+ mana of any color|mana of any (?:one )?color)",
     re.IGNORECASE,
 )
+# Conditional any-color: e.g. Plaza of Heroes "Add one mana of any color. This ability costs {1} less..."
+_CONDITIONAL_ANY_RE = re.compile(
+    r"Add (?:one mana of any color|[a-z]+ mana of any color|mana of any (?:one )?color).*?(?:costs?|unless|if|only)",
+    re.IGNORECASE,
+)
 
 _BASIC_TYPE_TO_COLOR = {
     "Plains": "W",
@@ -37,12 +42,17 @@ def pip_demand(cards: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def land_color_production(lands: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Infer color production from land type_line and oracle_text."""
+    """Infer color production from land type_line and oracle_text.
+
+    Unconditional any-color lands (e.g. Crystal Grotto) count as 1 for each color.
+    Conditional any-color lands (e.g. Plaza of Heroes) count as 0.5 for each color.
+    """
     counts: Counter = Counter()
     for land in lands:
         type_line = land.get("type_line") or ""
         oracle = land.get("oracle_text") or ""
         produced: set = set()
+        weight = 1.0
 
         for basic_type, color in _BASIC_TYPE_TO_COLOR.items():
             if basic_type in type_line:
@@ -52,12 +62,15 @@ def land_color_production(lands: List[Dict[str, Any]]) -> Dict[str, int]:
             produced.add(m.group(1).upper())
 
         if _ADD_ANY_RE.search(oracle):
+            if _CONDITIONAL_ANY_RE.search(oracle):
+                weight = 0.5
             produced.update("WUBRG")
 
         for color in produced:
-            counts[color] += 1
+            counts[color] += weight
 
-    return dict(counts)
+    # Round to nearest int for downstream compatibility
+    return {k: round(v) for k, v in counts.items()}
 
 
 def burgess_formula(color_count: int, commander_cmc: float, deck_size: int) -> int:
@@ -130,14 +143,58 @@ def color_balance(
     return {"per_color": per_color, "flags": flags, "overall": overall}
 
 
+def splash_requirements(
+    splash_cards: List[Dict[str, Any]], total_lands: int
+) -> Dict[str, Any]:
+    """Compute required sources for each splash color.
+
+    Formulas (proportional to deck size):
+      - 1 splash card at CMC 4+: ceil(total_lands * 0.18)
+      - 1 splash card at CMC 3:   ceil(total_lands * 0.24)
+      - N splash cards:             ceil(total_lands * (0.18 + 0.06 * (N - 1)))
+      - Never exceed ceil(total_lands * 0.15) per splash color
+    """
+    splash_counts: Counter = Counter()
+    splash_max_cmc: Dict[str, int] = {}
+    for card in splash_cards:
+        ci = card.get("color_identity") or []
+        if not ci or len(ci) > 1:
+            continue  # only single-color splash cards
+        color = ci[0]
+        splash_counts[color] += 1
+        cmc = int(card.get("cmc", 0))
+        splash_max_cmc[color] = max(splash_max_cmc.get(color, 0), cmc)
+
+    per_color: Dict[str, Any] = {}
+    flags = []
+    for color, count in splash_counts.items():
+        max_cmc = splash_max_cmc.get(color, 0)
+        if max_cmc >= 4:
+            base = 0.18
+        else:
+            base = 0.24
+        required = math.ceil(total_lands * min(base + 0.06 * (count - 1), 0.15))
+        per_color[color] = {
+            "splash_card_count": count,
+            "max_cmc": max_cmc,
+            "required_sources": required,
+        }
+        # We don't flag here; splash check is advisory (greedy by design)
+    return {"per_color": per_color, "flags": flags, "overall": "PASS"}
+
+
 def mana_audit(
     deck_cards: List[Dict[str, Any]],
     format: str,
     commander_cards: Optional[List[Dict[str, Any]]] = None,
+    core_colors: Optional[List[str]] = None,
+    splash_colors: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Run full mana audit and return structured result dict.
 
     format: one of "40-card", "60-card", "commander-60", "commander-100"
+    core_colors: primary deck colors (subset of all card color identities)
+    splash_colors: off-color splash colors (≤ 3 cards each)
     """
     lands = [c for c in deck_cards if "land" in (c.get("type_line") or "").lower()]
     non_lands = [c for c in deck_cards if "land" not in (c.get("type_line") or "").lower()]
@@ -166,13 +223,36 @@ def mana_audit(
     else:
         land_count_status = "FAIL"
 
-    pips = pip_demand(deck_cards)
-    prod = land_color_production(lands)
-    balance = color_balance(pips, prod, land_count)
+    # Core color balance
+    core_colors = core_colors or []
+    splash_colors = splash_colors or []
 
-    if "FAIL" in (land_count_status, balance["overall"]):
+    core_cards = [c for c in deck_cards if set(c.get("color_identity") or []).issubset(set(core_colors))]
+    splash_cards = [c for c in deck_cards if not set(c.get("color_identity") or []).issubset(set(core_colors))]
+
+    core_pips = pip_demand(core_cards)
+    all_land_prod = land_color_production(lands)
+    core_lands_prod = {k: v for k, v in all_land_prod.items() if k in core_colors}
+    core_balance = color_balance(core_pips, core_lands_prod, land_count)
+
+    # Splash check
+    splash_check = splash_requirements(splash_cards, land_count)
+    for color, info in splash_check.get("per_color", {}).items():
+        actual = all_land_prod.get(color, 0)
+        required = info["required_sources"]
+        if actual < required:
+            splash_check["flags"].append({
+                "color": color,
+                "status": "WARN",
+                "actual": actual,
+                "required": required,
+            })
+            splash_check["overall"] = "WARN"
+
+    overall_statuses = [land_count_status, core_balance["overall"], splash_check["overall"]]
+    if "FAIL" in overall_statuses:
         overall = "FAIL"
-    elif "WARN" in (land_count_status, balance["overall"]):
+    elif "WARN" in overall_statuses:
         overall = "WARN"
     else:
         overall = "PASS"
@@ -183,11 +263,13 @@ def mana_audit(
         "land_count_status": land_count_status,
         "ramp_count": len(ramp),
         "avg_cmc": avg_cmc,
-        "pip_demand": pips,
-        "land_color_production": prod,
-        "color_balance_status": balance["overall"],
-        "color_balance_flags": balance["flags"],
-        "color_balance_per_color": balance["per_color"],
+        "pip_demand": core_pips,
+        "land_color_production": all_land_prod,
+        "color_balance_status": core_balance["overall"],
+        "color_balance_flags": core_balance["flags"],
+        "color_balance_per_color": core_balance["per_color"],
+        "splash_colors": splash_colors,
+        "splash_check": splash_check,
         "overall_status": overall,
     }
 
@@ -200,7 +282,7 @@ def format_audit_report(audit: Dict[str, Any]) -> str:
         f"[{audit['land_count_status']}]",
         f"Avg CMC:     {audit['avg_cmc']}   Ramp cards: {audit['ramp_count']}",
         "",
-        f"Color Balance:  [{audit['color_balance_status']}]",
+        f"Color Balance (core):  [{audit['color_balance_status']}]",
     ]
     for color, info in sorted(audit.get("color_balance_per_color", {}).items()):
         lines.append(
@@ -212,4 +294,21 @@ def format_audit_report(audit: Dict[str, Any]) -> str:
         lines.append("Flags:")
         for f in audit["color_balance_flags"]:
             lines.append(f"  {f['status']:4}  {f['color']}  gap {f['gap']:+.1f}pp")
+
+    splash = audit.get("splash_check")
+    if splash and splash.get("per_color"):
+        lines.append("")
+        lines.append(f"Splash Check: [{splash['overall']}]")
+        for color, info in sorted(splash["per_color"].items()):
+            actual = audit.get("land_color_production", {}).get(color, 0)
+            req = info["required_sources"]
+            status = "OK" if actual >= req else "WARN"
+            lines.append(
+                f"  {color}  {info['splash_card_count']} card(s), max CMC {info['max_cmc']}  "
+                f"sources {actual}/{req}  [{status}]"
+            )
+        for f in splash.get("flags", []):
+            lines.append(
+                f"  WARN  {f['color']}  actual {f['actual']} < required {f['required']}"
+            )
     return "\n".join(lines)

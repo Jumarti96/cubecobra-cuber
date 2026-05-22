@@ -146,14 +146,21 @@ def stats(
         if chart_list is None and not by:
             tag_data = stats_mod.compute_tag_density(cube)
             typer.echo(stats_mod.format_tag_density_report(tag_data))
+            archetype_data = stats_mod.compute_archetype_clusters(cube)
+            if archetype_data.get("clusters"):
+                typer.echo(stats_mod._format_archetype_clusters(archetype_data["clusters"], s["total_cards"]))
 
     if json_out:
         tag_data = stats_mod.compute_tag_density(cube)
-        path = stats_mod.write_analysis_json({**s, "tag_density": tag_data}, id_or_slug)
+        archetype_data = stats_mod.compute_archetype_clusters(cube)
+        path = stats_mod.write_analysis_json({**s, "tag_density": tag_data, "archetype_clusters": archetype_data}, id_or_slug)
         typer.echo(f"Analysis JSON: {path}")
 
     if md:
-        path = stats_mod.write_analysis_md(s, id_or_slug)
+        tag_data = stats_mod.compute_tag_density(cube)
+        archetype_data = stats_mod.compute_archetype_clusters(cube)
+        s_with_archetypes = {**s, "tag_density": tag_data, "archetype_clusters": archetype_data}
+        path = stats_mod.write_analysis_md(s_with_archetypes, id_or_slug)
         typer.echo(f"Analysis Markdown: {path}")
 
 
