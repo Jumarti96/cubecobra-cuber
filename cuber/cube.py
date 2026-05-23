@@ -84,10 +84,21 @@ class Card:
     mana_cost: Optional[str] = None
     layout: Optional[str] = None
     image_back_url: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    taxonomic_profile: Optional[Dict] = None
     notes: Optional[str] = None
     mtgo_id: Optional[str] = None
     card_faces: Optional[List[CardFace]] = None
+
+    @property
+    def tags(self) -> List[str]:
+        if not self.taxonomic_profile:
+            return []
+        p = self.taxonomic_profile
+        return (
+            list(p.get("synergy_clusters") or [])
+            + list(p.get("structural_roles") or [])
+            + list(p.get("mechanical_functions") or [])
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -111,7 +122,7 @@ class Card:
             "mana_cost": self.mana_cost,
             "layout": self.layout,
             "image_back_url": self.image_back_url,
-            "tags": self.tags,
+            "taxonomic_profile": self.taxonomic_profile,
             "notes": self.notes,
             "mtgo_id": self.mtgo_id,
         }
@@ -165,7 +176,7 @@ class Card:
             mana_cost=d.get("mana_cost"),
             layout=d.get("layout"),
             image_back_url=d.get("image_back_url"),
-            tags=d.get("tags", []),
+            taxonomic_profile=d.get("taxonomic_profile"),
             notes=d.get("notes"),
             mtgo_id=d.get("mtgo_id"),
             card_faces=faces,
@@ -232,7 +243,6 @@ def load_cube_from_mainboard_csv(id_or_slug: str) -> Cube:
             cmc = float(row.get("CMC") or 0)
         except (ValueError, TypeError):
             cmc = 0.0
-        tags = [t.strip() for t in (row.get("tags", "") or "").split(";") if t.strip()]
         cards.append(Card(
             name=name,
             scryfall_id="",
@@ -250,7 +260,6 @@ def load_cube_from_mainboard_csv(id_or_slug: str) -> Cube:
             status=row.get("status", ""),
             image_url=row.get("image URL", ""),
             image_back_url=row.get("image Back URL") or None,
-            tags=tags,
             notes=row.get("Notes") or None,
             mtgo_id=row.get("MTGO ID") or None,
         ))

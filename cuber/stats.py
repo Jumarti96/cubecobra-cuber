@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .cube import Cube, cube_dir
-from .tagger import SPEED_TAGS, ENGINE_TAGS
+from .tagger import MACRO_ARCHETYPES, SYNERGY_CLUSTERS
 
 COLOR_LABELS = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
 
@@ -91,32 +91,33 @@ def compute_tag_density(cube: Cube) -> Dict[str, Any]:
 
 
 def compute_archetype_clusters(cube: Cube) -> Dict[str, Any]:
-    """Compute (speed, engine) archetype pairs from card tags.
+    """Compute (macro_archetype, synergy_cluster) pairs from taxonomic_profile.
 
-    An archetype is a (speed_tag, engine_tag) pair.
-    A card contributes to an archetype if it has BOTH the speed tag AND the engine tag.
+    An archetype is a (macro_archetype, synergy_cluster) pair.
+    A card contributes if it has both values in its taxonomic_profile.
+    Cards with taxonomic_profile = None are skipped.
 
     Support thresholds (proportional to total mainboard cards):
-      - Sparse:   <  5% of pool
-      - Supported:  5% to < 10%
+      - Sparse:    < 5% of pool
+      - Supported: 5% to < 10%
       - Strong:    ≥ 10%
     """
     cards = [c for c in cube.cards if c.board == "mainboard"]
     total = len(cards) or 1
 
-    # Gather all (speed, engine) pairs found on individual cards
     archetype_counts: Dict[str, Dict[str, Any]] = {}
     for card in cards:
-        card_speeds = [t for t in card.tags if t in SPEED_TAGS]
-        card_engines = [t for t in card.tags if t in ENGINE_TAGS]
-        for speed in card_speeds:
-            for engine in card_engines:
-                key = f"{speed}-{engine}"
+        if not card.taxonomic_profile:
+            continue
+        card_macros = card.taxonomic_profile.get("macro_archetypes") or []
+        card_clusters = card.taxonomic_profile.get("synergy_clusters") or []
+        for macro in card_macros:
+            for cluster in card_clusters:
+                key = f"{macro}-{cluster}"
                 if key not in archetype_counts:
-                    archetype_counts[key] = {"speed": speed, "engine": engine, "count": 0}
+                    archetype_counts[key] = {"macro": macro, "cluster": cluster, "count": 0}
                 archetype_counts[key]["count"] += 1
 
-    # Classify support level
     clusters = []
     for key, data in archetype_counts.items():
         count = data["count"]
@@ -129,38 +130,42 @@ def compute_archetype_clusters(cube: Cube) -> Dict[str, Any]:
             support = "sparse"
         clusters.append({
             "name": key,
-            "speed": data["speed"],
-            "engine": data["engine"],
+            "macro": data["macro"],
+            "cluster": data["cluster"],
             "count": count,
             "pct": round(pct, 1),
             "support": support,
         })
 
-    # Sort by count descending
     clusters.sort(key=lambda x: -x["count"])
+    clusters = [c for c in clusters if c["pct"] >= 0.5]
 
     return {
         "clusters": clusters,
-        "speed_distribution": _speed_distribution(cards),
-        "engine_distribution": _engine_distribution(cards),
+        "macro_archetype_distribution": _macro_archetype_distribution(cards),
+        "synergy_cluster_distribution": _synergy_cluster_distribution(cards),
     }
 
 
-def _speed_distribution(cards: list) -> Dict[str, int]:
-    counts: Dict[str, int] = {s: 0 for s in SPEED_TAGS}
+def _macro_archetype_distribution(cards: list) -> Dict[str, int]:
+    counts: Dict[str, int] = {m: 0 for m in MACRO_ARCHETYPES}
     for card in cards:
-        for tag in card.tags:
-            if tag in counts:
-                counts[tag] += 1
+        if not card.taxonomic_profile:
+            continue
+        for macro in card.taxonomic_profile.get("macro_archetypes") or []:
+            if macro in counts:
+                counts[macro] += 1
     return counts
 
 
-def _engine_distribution(cards: list) -> Dict[str, int]:
-    counts: Dict[str, int] = {e: 0 for e in ENGINE_TAGS}
+def _synergy_cluster_distribution(cards: list) -> Dict[str, int]:
+    counts: Dict[str, int] = {c: 0 for c in SYNERGY_CLUSTERS}
     for card in cards:
-        for tag in card.tags:
-            if tag in counts:
-                counts[tag] += 1
+        if not card.taxonomic_profile:
+            continue
+        for cluster in card.taxonomic_profile.get("synergy_clusters") or []:
+            if cluster in counts:
+                counts[cluster] += 1
     return counts
 
 
@@ -401,14 +406,20 @@ def _format_guild_chart(guild_data: Dict[str, int]) -> str:
 
 
 def _format_archetype_clusters(clusters: List[Dict[str, Any]], total: int) -> str:
-    lines = ["\nARCHETYPE CLUSTERS (speed + engine)", "-" * 50]
-    max_c = max((c["count"] for c in clusters), default=1)
+    # Terminal display: only clusters with ≥1% support, max 20
+    display_clusters = [c for c in clusters if c["pct"] >= 1.0][:20]
+    if not display_clusters:
+        return "\nNo archetype clusters with ≥1% support.\n"
+    lines = ["\nARCHETYPE CLUSTERS (macro × synergy)", "-" * 50]
+    max_c = max((c["count"] for c in display_clusters), default=1)
     w = _bar_width()
-    for c in clusters:
+    for c in display_clusters:
         note = f" [{c['support']}]"
         lines.append(
             f"  {c['name']:<28} {_bar(c['count'], max_c, w)} {c['count']:>3} ({c['pct']:>5.1f}%){note}"
         )
+    if len(clusters) > len(display_clusters):
+        lines.append(f"  ... and {len(clusters) - len(display_clusters)} more clusters below 1%")
     lines.append("")
     lines.append("Support thresholds: strong ≥10%, supported 5-9.9%, sparse <5%")
     lines.append("")
@@ -595,8 +606,8 @@ def write_analysis_md(stats: Dict[str, Any], short_id: str) -> str:
     if archetypes and archetypes.get("clusters"):
         lines.append("## Archetype Clusters")
         lines.append("")
-        lines.append("| Archetype | Count | % | Support |")
-        lines.append("|-----------|------:|--:|:--------|")
+        lines.append("| Macro × Synergy Cluster | Count | % | Support |")
+        lines.append("|-------------------------|------:|--:|:--------|")
         for c in archetypes["clusters"]:
             lines.append(f"| {c['name']} | {c['count']} | {c['pct']}% | {c['support']} |")
         lines.append("")
