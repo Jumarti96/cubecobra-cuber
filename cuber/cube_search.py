@@ -13,11 +13,19 @@ from .cube import find_cube_dir, load_enriched
 
 # ── Pool loaders ────────────────────────────────────────────────────────────
 
-def load_merged_pool(id_or_slug: str) -> List[Dict[str, Any]]:
+def load_merged_pool(
+    id_or_slug: str,
+    card_pool_rules: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     """Load enriched.json cards and merge functional tags from tagged.csv.
 
     tagged.csv tags are merged onto each card's existing tags list (no duplicates).
     Returns a list of card dicts ready for search_pool().
+
+    card_pool_rules (optional) restricts and/or multiplies the pool:
+      - excluded: list of card names to remove regardless of rarity
+      - only_from: {rarity: [allowed names]} — all other cards of that rarity excluded
+      - multipliers: {rarity: N} — each card of that rarity appears N times in the pool
     """
     cube = load_enriched(id_or_slug)
     cube_folder = find_cube_dir(id_or_slug)
@@ -37,6 +45,8 @@ def load_merged_pool(id_or_slug: str) -> List[Dict[str, Any]]:
 
     pool = []
     for card in cube.cards:
+        if card.board != "mainboard":
+            continue
         d = card.to_dict()
         merged = list(card.tags)
         for tag in tags_by_name.get(card.name, []):
@@ -45,7 +55,42 @@ def load_merged_pool(id_or_slug: str) -> List[Dict[str, Any]]:
         d["tags"] = merged
         pool.append(d)
 
+    if card_pool_rules:
+        pool = _apply_card_pool_rules(pool, card_pool_rules)
+
     return pool
+
+
+def _apply_card_pool_rules(
+    pool: List[Dict[str, Any]],
+    rules: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Apply card_pool_rules filters and multipliers to a pool.
+
+    Processing order: exclusions and only_from narrow the pool first,
+    then multipliers expand it.
+    """
+    excluded: set = set(rules.get("excluded") or [])
+    only_from: Dict[str, List[str]] = rules.get("only_from") or {}
+    multipliers: Dict[str, int] = rules.get("multipliers") or {}
+
+    result: List[Dict[str, Any]] = []
+    for card in pool:
+        name = card.get("name", "")
+        rarity = (card.get("rarity") or "").lower()
+
+        if name in excluded:
+            continue
+
+        if rarity in only_from:
+            if name not in set(only_from[rarity]):
+                continue
+
+        copies = int(multipliers.get(rarity, 1))
+        for _ in range(copies):
+            result.append(dict(card))
+
+    return result
 
 
 def _parse_draft_pool_text(text: str) -> Counter:
@@ -229,7 +274,8 @@ def search_pool(
                 # Splash criteria: ≤ 2 off-color pips OR CMC ≥ 4 OR kicker
                 cmc = float(card.get("cmc") or 0)
                 mana_cost = card.get("mana_cost") or ""
-                off_pips = sum(1 for c in mana_cost if c in str(off_color))
+                off_color_letter = next(iter(off_color))
+                off_pips = mana_cost.count(f"{{{off_color_letter}}}")
                 has_kicker = "kicker" in [t.lower() for t in (card.get("tags") or [])]
                 if not (off_pips <= 2 or cmc >= 4 or has_kicker):
                     continue

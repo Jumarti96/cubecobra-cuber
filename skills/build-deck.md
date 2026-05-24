@@ -21,7 +21,7 @@ If the oracle text does not support the stated role, the card must be replaced.
 ```
 cuber fetch <id>
 cuber enrich <id>
-cuber tag <id>      ← strongly recommended; tags drive Deck Identity analysis
+cuber tag <id>      ← required; taxonomic_profile drives pipeline discovery
 ```
 
 ---
@@ -37,41 +37,68 @@ cuber tag <id>      ← strongly recommended; tags drive Deck Identity analysis
 
 ---
 
+## Phase 0: Card Pool Definition
+
+Before any analysis, establish what cards are available to the deck builder.
+
+Ask the user (in natural language):
+> "Are there any pool restrictions? For example: up to 2 copies of commons and uncommons, only certain rares, or specific cards to exclude. Press Enter to use the full cube mainboard."
+
+If the user provides no restrictions, proceed immediately with the full cube mainboard.
+
+From the user's answer, infer a `card_pool_rules` object:
+
+```json
+{
+  "base": "cube_mainboard",
+  "multipliers": { "common": 2, "uncommon": 2 },
+  "only_from": { "rare": ["Card A", "Card B"] },
+  "excluded": ["Oko, Thief of Crowns"]
+}
+```
+
+- `base` is always `"cube_mainboard"` — only the mainboard is supported.
+- `multipliers`: per-rarity max copy count (rarity not listed = 1 copy).
+- `only_from`: per-rarity allowlist — all other cards of that rarity are excluded.
+- `excluded`: specific card names excluded regardless of other rules.
+
+**Display the inferred `card_pool_rules` and ask the user to confirm before proceeding.**
+
+If the user corrects the inferred object, update it and re-display. Proceed only after explicit confirmation.
+
+Once confirmed, pass `card_pool_rules` to `cube_search.load_merged_pool(id, card_pool_rules=...)`. All subsequent phases use this filtered pool exclusively.
+
+---
+
 ## Phase 1: Interview
 
-Use AskUserQuestion to collect all decisions before doing any analysis. Ask in a single multi-part message where possible.
+Use AskUserQuestion to collect decisions before any analysis. Ask in a single multi-part message where possible.
 
 **Required:**
 1. **Cube** — short ID or slug (or list available cubes from `cubes/*/meta.json`)
 2. **Format** — 40-card / 60-card / Commander-60 / Commander-100
-3. **Colors** — which 1–3 colors; "surprise me" is valid (analyze pool first)
-4. **Strategy / archetype** — aggro, control, midrange, combo, graveyard, tokens, etc.
+3. **Colors** *(optional)* — any color preference? Default is pool-derived; say "surprise me" or leave empty to let strategy discovery determine colors from the winning pipeline
+4. **Intent** — how do you want to play? Choose one:
+   - `Competitive` — maximize win consistency, interaction density
+   - `Experimental` — unusual synergies, high variance, cross-archetype overlap
+   - `Fun / Niche` — most distinctive or uncommon win condition in the pool
+   - `Specific Constraint` — describe your constraint (e.g., "I want to play around Grapeshot")
 5. **Power level** — casual / unpowered / powered / competitive
 
 **Optional (ask but accept empty):**
-6. **Restrictions** — budget, exclusions, max copies, locked-in cards, banned cards
-7. **Sideboard size** — accept default for format or specify
+6. **Sideboard size** — accept format default or specify
 
-Parse restrictions into a structured object:
-```json
-{
-  "max_copies": 1,
-  "locked_cards": ["Lightning Bolt"],
-  "excluded_cards": ["Oko, Thief of Crowns"],
-  "custom": "up to 2 rares total"
-}
-```
-Thread restrictions through every subsequent phase.
+Note: card pool restrictions were collected in Phase 0. Do not re-ask them here.
 
 ---
 
-## Phase 2: Deck Identity
+## Phase 2: Deck Identity (Discovery)
 
-Read `cubes/<id>/enriched.json` and `cubes/<id>/tagged.csv` using `cube_search.load_merged_pool(id)`.
+Load the pool: `cube_search.load_merged_pool(id, card_pool_rules=...)`.
 
 ### Step 0: Environment Profile
 
-**Run this first, before any color analysis.**
+**Run this first, before discovery.**
 
 Check for an existing cube analysis file in either location (try both):
 - `cubes/<slug>/exports/analysis.json`
@@ -85,7 +112,7 @@ From the analysis file, extract the following signals:
 
 **Dominant archetype tags** — what are the top 5 tags by card count across the entire cube? These define what the environment rewards, independent of the user's color restrictions.
 
-**Multicolor environment signals** — check for the following in the cube-wide tag list and land pool:
+**Multicolor environment signals:**
 - `domain` tag density ≥ 10% of non-land cards → **domain environment**: 4-5 color decks are potentially viable if fixing supports it
 - Lands that produce 3 or more colors (filter `enriched.json` lands by `len(color_identity) >= 3`) → **universal fixing present**: 3+ color decks are structurally supported
 - `kicker` tag density ≥ 10% → **kicker environment**: multicolor breadth matters less; prioritize on-color efficiency
@@ -93,16 +120,7 @@ From the analysis file, extract the following signals:
 Produce an **Environment Characterization** sentence before proceeding:
 > "Balanced draft environment with strong graveyard and spells-matter themes; domain signal present (12% tag density) but universal fixing absent — 3-color is achievable, 4-5 requires explicit fixing."
 
-**Color count escalation rules** (apply when user says "surprise me" or "best strategy"):
-
-| Color count | Escalate when |
-|-------------|--------------|
-| 2-color | Default — always evaluate first |
-| 3-color | Fixing is GOOD for the trio (≥ 2 common duals covering each pair) |
-| 4-color | Domain signal present AND ≥ 3 common duals covering most pairs, OR universal fixing (3+ color lands) present |
-| 5-color | Domain signal strong (≥ 15% tag density) AND universal fixing present, OR user explicitly requested it |
-
-Never recommend a higher color count solely because the tag pool is larger. Fixing supportability must justify the jump.
+---
 
 ### Step 1: Mana Infrastructure Inventory
 
@@ -122,44 +140,78 @@ UR           Molten Tributary          Shivan Reef
 
 For each **candidate color combination** being evaluated:
 - Count freely accessible duals at **common** rarity: 0 = no fixing, 1 = minimal, 2+ = solid
-- Count duals at **rare** rarity: note whether available under the user's restrictions
-- Count lands producing 3+ colors: each one supports all trios/quads that overlap its identity
-- Assign a fixing score: **GOOD** (≥ 2 common duals per color pair in the combination), **THIN** (1 common dual or 1+ unrestricted rare dual per pair), **NONE** (0 accessible duals for at least one pair)
+- Count duals at **rare** rarity: note whether available under the pool rules
+- Count lands producing 3+ colors
+- Assign a fixing score: **GOOD** (≥ 2 common duals per color pair), **THIN** (1 common dual or 1+ rare dual per pair), **NONE** (0 accessible duals for at least one pair)
 
-Factor fixing scores into the identity recommendation alongside tag density. A combination with GOOD fixing and SUPPORTED tags may outperform a combination with STRONG tags but NONE fixing. Never recommend a color combination without stating its fixing score.
-
-### Step 2: Pool and Tag Density
-
-Build the available pool: all cards where `board == "mainboard"` and color identity is a subset of the chosen colors.
-
-**Tabulate tag density per color** (count of cards per functional tag, grouped by color):
-
-```
-Tag Density Report — {colors} pool ({N} cards)
-────────────────────────────────────────────────
-Tag              Count   Coverage
-removal          14       18%
-card-draw        9        12%
-ramp             6         8%
-threat           18       23%
-counter          4         5%
-graveyard        11       14%
-...
-```
-
-**Classify archetypes:**
-- **Strong** (≥ 10 cards with tag): fully supported archetype
-- **Supported** (5–9 cards): playable but thin
-- **Sparse** (< 5 cards): not viable as primary identity
-
-**Propose a deck identity sentence** based on density analysis:
-> "Black-Green graveyard midrange with strong threat density and supported removal."
-
-Confirm with user before proceeding. If they redirect the strategy, re-tabulate for the new direction.
+Carry this fixing inventory forward — it informs pipeline color feasibility in Step 2.
 
 ---
 
-## Phase 3: Commander Selection (Commander formats only)
+### Step 2: Pipeline Discovery
+
+**Find all Payoff candidates.**
+
+Query the filtered pool for cards where `taxonomic_profile.structural_roles` contains `"Payload/Payoff"`. These are the win condition candidates.
+
+If no cards have `"Payload/Payoff"`, fall back to cards with `"Standalone Threat"` as implicit payoffs and note this in the output.
+
+**Validate each Payoff against its synergy cluster support.**
+
+For each Payoff candidate:
+1. Read its `taxonomic_profile.synergy_clusters`.
+2. Count all cards in the pool whose `taxonomic_profile.synergy_clusters` overlap with the Payoff's clusters AND whose `taxonomic_profile.structural_roles` include `"Enabler/Fodder"` or `"Engine/Outlet"`.
+3. Viability threshold: `round(N × 0.05)` supporting cards, where N is the target deck size.
+4. If supporting card count ≥ threshold → pipeline is **viable**.
+5. If supporting card count < threshold → pipeline is **non-viable** (exclude from shortlist).
+
+**Apply color constraint if specified.**
+
+If the user declared a color preference in Phase 1, also exclude Payoffs whose core pipeline cards (the Payoff + its primary support cards) fall outside the stated color identity.
+
+**Build the shortlist.**
+
+Collect all viable pipelines and rank them by intent (from Phase 1):
+- `Competitive` → rank by highest count of Interaction/Disruption + Infrastructure/Consistency support cards in the pipeline's clusters
+- `Experimental` → rank by highest cross-cluster overlap (Payoff shares synergy clusters with the most distinct card groups)
+- `Fun / Niche` → rank by most unusual win condition (rarest synergy_cluster combination in the pool)
+- `Specific Constraint` → rank by closest match to the user-stated constraint
+
+Select the top 3–5 for the shortlist.
+
+If fewer than 3 viable pipelines exist, include all viable ones without padding.
+
+If no viable pipelines exist, report:
+> "No viable pipelines found in the current pool."
+
+Ask whether to lower the viability threshold or change pool rules (restart Phase 0).
+
+Tag density is still shown as context (count of Enabler/Fodder and Engine/Outlet per synergy cluster), but strategy selection is driven by the pipeline shortlist, not tag density alone.
+
+---
+
+## Phase 3: Strategy Selection
+
+Present the shortlist to the user.
+
+For each pipeline entry display:
+- Payoff card name and its synergy cluster(s)
+- Supporting card count (Enabler/Fodder + Engine/Outlet in the cluster)
+- Color identity of the pipeline's core cards
+- Fixing score for that color combination (from Step 1)
+
+**Highlight the top recommendation** (marked clearly, based on intent ranking). If the user had no color preference in Phase 1, show the recommended pipeline's color identity as the suggested default.
+
+Ask the user to:
+- Accept the top recommendation
+- Pick a different pipeline from the shortlist
+- Describe their own constraint (AI constructs and validates a pipeline anchored to it)
+
+Lock the selected pipeline. **Carry the full shortlist forward — it will be used for re-evaluation in Phase 9 if needed.** The shortlist is never recomputed.
+
+---
+
+## Phase 4: Commander Selection (Commander formats only)
 
 Skip this phase for 40-card and 60-card formats.
 
@@ -175,44 +227,51 @@ On selection, derive the **binding color constraint**: the union of commanders' 
 
 ---
 
-## Phase 4: Deck Build
+## Phase 5: Deck Build
 
 Use `cube_search.search_pool(pool, color_identity=..., ...)` to fill each slot category.
 
 For each slot, read `oracle_text` from `enriched.json` before including any card. Do not rely on training-data knowledge of what the card does.
 
-**Slot allocation guidelines:**
+**Slot allocation — proportional to N.**
 
-### 40-card draft
-| Slot | Target | Notes |
-|------|--------|-------|
-| Lands | 17 | On-color basics + dual lands |
-| Removal / interaction | 8–10 | Instants preferred |
-| Threats / win conditions | 10–12 | Match curve to strategy |
-| Engine / card advantage | 6–8 | Card draw, tutors |
+All slot counts are derived as proportions of the total deck size N. State every proportion as a percentage and the resulting absolute count: `round(N × proportion)`. Include a one-sentence rationale for each allocation explaining why the proportion fits this specific strategy type.
 
-### 60-card constructed
-| Slot | Target | Notes |
-|------|--------|-------|
-| Lands | 20–24 | Adjust with ramp count |
-| Removal / interaction | 10–12 | |
-| Threats | 16–20 | |
-| Engine | 8–12 | |
+Required format for every allocation:
+> "Lands: 15 (37.5% of N=40) — combo strategies run lean to fit more engine pieces; this deck generates additional mana via ritual effects."
 
-### Commander-60 / Commander-100
-Scale slot allocations proportionally. Commander counts toward threats/engine, not the 60/100.
+**Reference proportions by strategy type (starting points, not fixed targets):**
 
-**Restrictions enforcement:** At every pick, verify the card does not violate the parsed restrictions object. Build a running compliance checklist.
+| Slot | Combo / Storm | Aggro | Midrange | Control |
+|------|--------------|-------|----------|---------|
+| Lands | 32–38% | 35–40% | 38–42% | 40–45% |
+| Interaction | 15–20% of non-land | 10–15% | 20–25% | 25–35% |
+| Threats / Payoffs | 20–30% of non-land | 35–45% | 25–35% | 15–20% |
+| Engine / Enablers | 25–35% of non-land | 10–20% | 20–30% | 20–30% |
+
+The AI chooses proportions that fit the selected pipeline and defends them. These ranges are guidance; the rationale must justify any deviation.
+
+**Mana source allocation — derived from pip demand.**
+
+1. Count all colored pips in the deck's mana costs across all cards.
+2. Calculate each color's share of total pips.
+3. Distribute producing lands proportionally to pip share.
+4. State the pip counts and the derived split explicitly.
+
+Example:
+> "14 blue pips, 8 black pips (64% / 36%). Targeting 11 blue sources and 6 black sources out of 17 total lands."
+
+**Restrictions enforcement:** At every pick, verify the card does not violate `card_pool_rules`. Build a running compliance checklist.
 
 **Verify before including any card:**
 1. Card exists by name in enriched.json — hard check, no exceptions
 2. Oracle text supports its assigned role — cite it explicitly
 3. Color identity is within the chosen color constraint
-4. Restrictions are not violated
+4. `card_pool_rules` are not violated
 
 ---
 
-## Phase 5: Mana Audit Gate
+## Phase 6: Mana Audit Gate
 
 Convert the proposed deck to a list of card dicts (from `enriched.json` fields + merged tags).
 
@@ -233,7 +292,7 @@ Do not show the deck to the user until the audit is at least WARN or PASS.
 
 ---
 
-## Phase 6: Sideboard
+## Phase 7: Sideboard
 
 Skip if the user opted out or if format does not normally use sideboards.
 
@@ -243,24 +302,24 @@ Fill sideboard from the remaining cube pool (cards not already in the main deck)
 - **Hate cards**: match likely opposing archetypes (graveyard hate, artifact removal, etc.) — cite oracle text for each
 - **Flex slots**: cards that improve in certain matchups; explain what they answer
 
-Challenger evaluates sideboard cohesion in Phase 8.
+Challenger evaluates sideboard cohesion in Phase 9.
 
 ---
 
-## Phase 7: Pre-Grill Check
+## Phase 8: Pre-Grill Check
 
 Before the self-grill, perform hard verification:
 
 1. **Cube membership**: every card in main deck + sideboard exists in `enriched.json` by exact name
 2. **Oracle text coverage**: every card has a non-empty `oracle_text` in enriched.json
-3. **Restrictions compliance**: full check against parsed restrictions object — produce checklist
-4. **Mana audit**: confirm audit result is not FAIL (re-run if deck changed since Phase 5)
+3. **Restrictions compliance**: full check against `card_pool_rules` — produce checklist
+4. **Mana audit**: confirm audit result is not FAIL (re-run if deck changed since Phase 6)
 
 Remove any card failing check 1. Replace from the pool. Flag any oracle text gaps.
 
 ---
 
-## Phase 8: Self-Grill (Hard Gate)
+## Phase 9: Self-Grill (Hard Gate)
 
 Spawn two parallel Agent calls. Neither agent sees the other's output during generation.
 
@@ -269,8 +328,8 @@ Spawn two parallel Agent calls. Neither agent sees the other's output during gen
 Defend the full deck list (main + sideboard). For every card:
 - State its role in the strategy
 - Quote `oracle_text` from enriched.json: `Oracle: "..."`
-- Confirm it fits the deck identity established in Phase 2
-- Confirm it passes the restrictions check
+- Confirm it fits the selected pipeline from Phase 3
+- Confirm it passes the `card_pool_rules` check
 - Confirm color identity is within constraint
 
 ### Challenger Agent
@@ -278,11 +337,13 @@ Defend the full deck list (main + sideboard). For every card:
 Attack the deck independently:
 1. **Cube membership** — verify each card exists in enriched.json; flag any phantom inclusions (MUST be removed)
 2. **Oracle text** — read oracle text independently; does it actually do what Proposer claims?
-3. **Restrictions** — check every card against restrictions object; flag violations
-4. **Identity fit** — does each card contribute to the stated deck identity? Suggest cuts that don't
+3. **Restrictions** — check every card against `card_pool_rules`; flag violations
+4. **Identity fit** — does each card contribute to the selected pipeline? Suggest cuts that don't
 5. **Better alternatives** — is there a card in the cube pool that fills the slot more efficiently? Check enriched.json tags and oracle text
-6. **Sideboard cohesion** — does the sideboard address realistic weaknesses? Are slots wasted?
-7. **Mana audit re-run** — independently run mana_audit on the list; report discrepancies
+6. **Proportional validation** — verify each slot allocation is within accepted MTG deckbuilding ranges for the stated strategy type. Flag any proportion that deviates significantly from convention without adequate rationale
+7. **Sideboard cohesion** — does the sideboard address realistic weaknesses? Are slots wasted?
+8. **Mana audit re-run** — independently run mana_audit on the list; report discrepancies
+9. **Pipeline viability** — can this pipeline actually achieve its stated win condition with the available card pool? If not, state explicitly: **"This pipeline cannot achieve its stated win condition with the available card pool."**
 
 ### Resolve Grill
 
@@ -291,9 +352,23 @@ Attack the deck independently:
 - Any card without confirmed cube membership must be removed
 - Final list must satisfy: all cards in cube + oracle text supports all roles + audit ≥ WARN
 
+### Re-evaluation Path
+
+If the Challenger states **"This pipeline cannot achieve its stated win condition with the available card pool"** (this is the specific trigger — not a mana issue, not a ratio issue, not a card-swap issue):
+
+1. Log the reason the current pipeline was rejected.
+2. Select the **next pipeline** from the Phase 3 shortlist (do NOT re-run discovery or Phase 2).
+3. Rebuild from **Phase 5 (Deck Build)** with the new pipeline.
+4. Re-run Phases 6–9 for the new pipeline.
+
+If the shortlist is exhausted (all shortlisted pipelines have been attempted and rejected by the Challenger):
+> "All shortlisted pipelines were rejected. Options: (1) Restart Phase 0 to adjust pool rules. (2) Lower the viability threshold and rerun discovery."
+
+Wait for user guidance before proceeding.
+
 ---
 
-## Phase 9: Present Final Deck
+## Phase 10: Present Final Deck
 
 Display the deck using the enforced format below. **Section order is strict — do not reorder.**
 
@@ -364,7 +439,7 @@ Ask: **"Save this deck? [y/N]"**
 
 ---
 
-## Phase 10: Save
+## Phase 11: Save
 
 On confirmation, prompt for a deck name if not already provided. Sanitize to a filesystem-safe slug (lowercase, alphanumeric + hyphens).
 
@@ -414,7 +489,7 @@ The function writes to `cubes/<id>/decks/<name>/deck.mwDeck` automatically.
 
 **Write analysis.md** using `exporter.write_deck_analysis_md(analysis_text, short_id, deck_name, frontmatter)`:
 
-The `analysis_text` is the full Phase 9 output reformatted as Markdown:
+The `analysis_text` is the full Phase 10 output reformatted as Markdown:
 - Section headers use `##` (e.g. `## MAINBOARD`)
 - Card tables are in fenced code blocks (``` ``` ```) to preserve monospace alignment
 - The `── ANALYSIS ──` zone body is rendered as free Markdown (not in a code block)
@@ -452,13 +527,14 @@ Saved:
 
 | Task | Tool / File |
 |------|-------------|
-| Load card pool | `cube_search.load_merged_pool(id)` |
+| Load card pool (with pool rules) | `cube_search.load_merged_pool(id, card_pool_rules=...)` |
 | Filter by color/type/tag/CMC | `cube_search.search_pool(pool, ...)` |
+| Query Payoff candidates | Filter pool by `taxonomic_profile.structural_roles` containing `"Payload/Payoff"` |
+| Query synergy support | Filter pool by `taxonomic_profile.synergy_clusters` overlap + `"Enabler/Fodder"` or `"Engine/Outlet"` in `structural_roles` |
 | Find commander candidates | `commander_finder.find_commanders(id, color_identity)` |
 | Display commander table | `commander_finder.format_commanders_table(candidates)` |
 | Run mana audit | `deck_audit.mana_audit(deck_cards, format, commander_cards)` |
 | Display audit report | `deck_audit.format_audit_report(audit)` |
 | Verify card exists | Search `enriched.json` cards[] by exact name |
 | Read oracle text | `card.oracle_text` from enriched.json — never training data |
-| Tag density analysis | `tagged.csv` tags column, grouped by color_identity |
 | Write deck files | Write tool → `cubes/<id>/decks/<name>/deck.json` and `deck.csv`. `exporter.write_mwdeck()` → `deck.mwDeck`. `exporter.write_deck_analysis_md()` → `analysis.md` |
