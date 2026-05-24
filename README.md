@@ -261,17 +261,25 @@ Full statistics dashboard: color distribution, CMC curve, rarity, card types, an
 
 ### `/build-deck <id>`
 
-Builds a deck from your cube in any supported format. Runs a structured interview, identifies the deck's archetype identity from tag density, validates the mana base using established formulas (Burgess + Karsten), enforces any restrictions you specify, and runs a two-agent self-grill debate before showing the final list.
+Builds a deck from your cube in any supported format. Uses a discovery-first approach: the skill finds viable win conditions in the pool before any strategy is declared, presents a shortlist of 3–5 pipelines, lets you pick or override, then assembles the deck with proportionally-reasoned slot allocations. A two-agent self-grill gate runs before the final list is shown.
 
 **Supported formats:**
-- **40-card draft** — standard cube draft deck (17 lands, default sideboard: 8)
+- **40-card draft** — standard cube draft deck (default sideboard: 8)
 - **60-card constructed** — with sideboard (default: 15)
 - **Commander-60** — 60 cards + 1 commander (or 2 partners)
 - **Commander-100** — classic 100-card EDH
 
-**Restrictions:** The skill understands natural-language restrictions like "up to 2 copies of commons or uncommons, 1 copy of rares, no infinite combos." Both the builder and the self-grill challenger enforce restrictions mechanically.
+**Phase flow:**
+- **Phase 0 — Card Pool Definition:** Optionally restrict the pool (copy limits per rarity, specific card exclusions). The skill infers a `card_pool_rules` object from natural language and confirms before proceeding.
+- **Phase 1 — Interview:** Cube, format, optional color preference, intent (Competitive / Experimental / Fun / Specific Constraint), power level.
+- **Phase 2 — Discovery:** Finds Payoff/Payoff candidates via `taxonomic_profile.structural_roles`, validates each against Enabler/Fodder and Engine/Outlet counts per `synergy_clusters`, produces a viable pipeline shortlist.
+- **Phase 3 — Strategy Selection:** Shows the shortlist with a recommendation based on your intent. You accept, pick another, or describe your own constraint.
+- **Phase 4 — Commander Selection** (commander formats only): finds valid commanders, handles partners.
+- **Phase 5 — Deck Build:** All slot allocations expressed as proportions of deck size N, with rationale for each. Mana sources derived from pip demand.
+- **Phases 6–9:** Mana audit, sideboard, pre-grill check, self-grill (two parallel agents — proportional reasoning is validated alongside cube membership and oracle text).
+- **Re-evaluation:** If the self-grill challenger declares a pipeline fundamentally broken, the skill automatically tries the next pipeline from the Phase 3 shortlist without restarting discovery.
 
-**Example:** `/build-deck obc` → "40-card BG graveyard deck, up to 1 rare, no infinite combos"
+**Example:** `/build-deck obc` → "40-card, Competitive intent, surprise me on colors"
 
 ---
 
