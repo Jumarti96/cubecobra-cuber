@@ -113,12 +113,24 @@ From the analysis file, extract the following signals:
 **Dominant archetype tags** — what are the top 5 tags by card count across the entire cube? These define what the environment rewards, independent of the user's color restrictions.
 
 **Multicolor environment signals:**
-- `domain` tag density ≥ 10% of non-land cards → **domain environment**: 4-5 color decks are potentially viable if fixing supports it
+- Any of `domain`, `vivid`, `converge`, `sunburst` tag density ≥ 10% of non-land cards → **multicolor-reward environment**: cards in this cube get stronger the more colors you play; 3–5 color decks may be worth considering if fixing supports it. Note which mechanic(s) are present.
 - Lands that produce 3 or more colors (filter `enriched.json` lands by `len(color_identity) >= 3`) → **universal fixing present**: 3+ color decks are structurally supported
 - `kicker` tag density ≥ 10% → **kicker environment**: multicolor breadth matters less; prioritize on-color efficiency
 
 Produce an **Environment Characterization** sentence before proceeding:
 > "Balanced draft environment with strong graveyard and spells-matter themes; domain signal present (12% tag density) but universal fixing absent — 3-color is achievable, 4-5 requires explicit fixing."
+
+**Color count escalation rules** — apply whenever evaluating or recommending color count. Skip only when the user locked a specific color identity in Phase 1, or when Phase 4 commander selection has bound the identity.
+
+| Color count | Recommend when |
+|-------------|----------------|
+| 1 (Mono) | Pipeline is self-contained in one color; fixing is absent or the strategy gains nothing from off-color cards |
+| 2 | Default starting point — evaluate before escalating |
+| 3 | Fixing score is GOOD for all pairs in the trio |
+| 4 | Multicolor-reward signal present AND fixing GOOD for most pairs, OR universal fixing present |
+| 5 | Strong multicolor-reward signal AND universal fixing present, OR user explicitly requested it |
+
+Never recommend a higher color count solely because the tag pool is larger. Fixing supportability must justify the jump.
 
 ---
 
@@ -209,6 +221,18 @@ Ask the user to:
 
 Lock the selected pipeline. **Carry the full shortlist forward — it will be used for re-evaluation in Phase 9 if needed.** The shortlist is never recomputed.
 
+### Splash Evaluation
+
+After locking the pipeline, scan the full pool for off-color cards whose `taxonomic_profile.synergy_clusters` overlap with the selected pipeline's clusters and whose `taxonomic_profile.structural_roles` include `"Payload/Payoff"` or `"Engine/Outlet"`. These are splash candidates — high-value cards that directly support the strategy but fall outside the core color identity.
+
+For each candidate, check whether it qualifies as a splash:
+- Its `color_identity` contains exactly 1 color not in `core_colors`
+- No more than 3 cards of that off-color are being considered
+
+If qualified candidates exist, note them and set `splash_colors` to the list of off-color letters (e.g., `["R"]`). Otherwise set `splash_colors = []`.
+
+Do not present this evaluation to the user or ask for confirmation. Carry `core_colors` and `splash_colors` forward into Phase 5 and Phase 6.
+
 ---
 
 ## Phase 4: Commander Selection (Commander formats only)
@@ -229,7 +253,7 @@ On selection, derive the **binding color constraint**: the union of commanders' 
 
 ## Phase 5: Deck Build
 
-Use `cube_search.search_pool(pool, color_identity=..., ...)` to fill each slot category.
+Use `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` to fill each slot category. Splash-eligible cards (single off-color CI, ≤ 2 off-color pips OR CMC ≥ 4 OR kicker) are automatically surfaced.
 
 For each slot, read `oracle_text` from `enriched.json` before including any card. Do not rely on training-data knowledge of what the card does.
 
@@ -253,10 +277,11 @@ The AI chooses proportions that fit the selected pipeline and defends them. Thes
 
 **Mana source allocation — derived from pip demand.**
 
-1. Count all colored pips in the deck's mana costs across all cards.
-2. Calculate each color's share of total pips.
-3. Distribute producing lands proportionally to pip share.
-4. State the pip counts and the derived split explicitly.
+1. Count all colored pips in the deck's mana costs across **core color cards only**.
+2. Calculate each core color's share of total core pips.
+3. Distribute producing lands proportionally to core pip share.
+4. If `splash_colors` is non-empty, allocate 2–3 dedicated sources per splash color from the remaining land slots — do not include splash pips in the proportional calculation.
+5. State the pip counts, derived core split, and any splash source allocation explicitly.
 
 Example:
 > "14 blue pips, 8 black pips (64% / 36%). Targeting 11 blue sources and 6 black sources out of 17 total lands."
@@ -275,7 +300,7 @@ Example:
 
 Convert the proposed deck to a list of card dicts (from `enriched.json` fields + merged tags).
 
-Run `deck_audit.mana_audit(deck_cards, format, commander_cards)`.
+Run `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)`.
 Display the report using `deck_audit.format_audit_report(audit)`.
 
 **If audit result is FAIL:**
@@ -528,12 +553,12 @@ Saved:
 | Task | Tool / File |
 |------|-------------|
 | Load card pool (with pool rules) | `cube_search.load_merged_pool(id, card_pool_rules=...)` |
-| Filter by color/type/tag/CMC | `cube_search.search_pool(pool, ...)` |
+| Filter by color/type/tag/CMC | `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` |
 | Query Payoff candidates | Filter pool by `taxonomic_profile.structural_roles` containing `"Payload/Payoff"` |
 | Query synergy support | Filter pool by `taxonomic_profile.synergy_clusters` overlap + `"Enabler/Fodder"` or `"Engine/Outlet"` in `structural_roles` |
 | Find commander candidates | `commander_finder.find_commanders(id, color_identity)` |
 | Display commander table | `commander_finder.format_commanders_table(candidates)` |
-| Run mana audit | `deck_audit.mana_audit(deck_cards, format, commander_cards)` |
+| Run mana audit | `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)` |
 | Display audit report | `deck_audit.format_audit_report(audit)` |
 | Verify card exists | Search `enriched.json` cards[] by exact name |
 | Read oracle text | `card.oracle_text` from enriched.json — never training data |
