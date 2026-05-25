@@ -11,7 +11,7 @@ Build a deck from a locally cached cube in any supported format. Cards must come
 ## IRON RULE
 
 **Never assume what a card does from prior knowledge.**
-Every inclusion and justification MUST cite `oracle_text` from `enriched.json`.
+Every inclusion and justification MUST cite `oracle_text` from the working pool cache (`_workspace/<deck-slug>_working_pool.json`). Phase 9 agents cite oracle text from the grill input bundle (`_workspace/<deck-slug>_grill_input.json`).
 If the oracle text does not support the stated role, the card must be replaced.
 
 ---
@@ -77,6 +77,16 @@ If the user corrects the inferred object, update it and re-display. Proceed only
 
 Once confirmed, pass `card_pool_rules` to `cube_search.load_merged_pool(id, card_pool_rules=...)`. All subsequent phases use this filtered pool exclusively.
 
+### Working Pool Cache
+
+After loading the filtered pool, write `_workspace/<deck-slug>_working_pool.json`. Since the deck name is not yet known at Phase 0, derive a temporary slug from the color identity and current timestamp (e.g., `pool-multicolor-20260524143000`). Track this path — all subsequent phases reference it.
+
+Include per-card fields: `name`, `oracle_text`, `colors`, `color_identity`, `taxonomic_profile`, `cmc`, `type_line`, `rarity`, `board`.
+
+Exclude: `image URL`, `image Back URL`, `MTGO ID`, `Custom`, `Voucher`, `status`, `Finish`, `Set`, `Collector Number`, and any other display-only metadata.
+
+**Do not read `enriched.json` after Phase 0 completes.** All card data for Phases 2–7 comes from the working pool cache.
+
 ---
 
 ## Phase 1: Interview
@@ -103,7 +113,7 @@ Note: card pool restrictions were collected in Phase 0. Do not re-ask them here.
 
 ## Phase 2: Deck Identity (Discovery)
 
-Load the pool: `cube_search.load_merged_pool(id, card_pool_rules=...)`.
+Load card data from the working pool cache: `_workspace/<deck-slug>_working_pool.json`. Do not call `cube_search.load_merged_pool` or read `enriched.json`.
 
 ### Step 0: Environment Profile
 
@@ -123,7 +133,7 @@ From the analysis file, extract the following signals:
 
 **Multicolor environment signals:**
 - Any of `domain`, `vivid`, `converge`, `sunburst` tag density ≥ 10% of non-land cards → **multicolor-reward environment**: cards in this cube get stronger the more colors you play; 3–5 color decks may be worth considering if fixing supports it. Note which mechanic(s) are present.
-- Lands that produce 3 or more colors (filter `enriched.json` lands by `len(color_identity) >= 3`) → **universal fixing present**: 3+ color decks are structurally supported
+- Lands that produce 3 or more colors (filter working pool cache lands by `len(color_identity) >= 3`) → **universal fixing present**: 3+ color decks are structurally supported
 - `kicker` tag density ≥ 10% → **kicker environment**: multicolor breadth matters less; prioritize on-color efficiency
 
 Produce an **Environment Characterization** sentence before proceeding:
@@ -145,7 +155,7 @@ Never recommend a higher color count solely because the tag pool is larger. Fixi
 
 ### Step 1: Mana Infrastructure Inventory
 
-**Run after the Environment Profile.** Read all lands from `enriched.json` where `board == "mainboard"`. Group non-basic lands by the number of colors they produce and their rarity.
+**Run after the Environment Profile.** Read all lands from the working pool cache where `board == "mainboard"`. Group non-basic lands by the number of colors they produce and their rarity.
 
 Display a dual land table covering all color pairs present:
 
@@ -264,7 +274,7 @@ On selection, derive the **binding color constraint**: the union of commanders' 
 
 Use `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` to fill each slot category. Splash-eligible cards (single off-color CI, ≤ 2 off-color pips OR CMC ≥ 4 OR kicker) are automatically surfaced.
 
-For each slot, read `oracle_text` from `enriched.json` before including any card. Do not rely on training-data knowledge of what the card does.
+For each slot, read `oracle_text` from the working pool cache before including any card. Do not rely on training-data knowledge of what the card does.
 
 **Slot allocation — proportional to N.**
 
@@ -298,8 +308,8 @@ Example:
 **Restrictions enforcement:** At every pick, verify the card does not violate `card_pool_rules`. Build a running compliance checklist.
 
 **Verify before including any card:**
-1. Card exists by name in enriched.json — hard check, no exceptions
-2. Oracle text supports its assigned role — cite it explicitly
+1. Card exists by name in the working pool cache — hard check, no exceptions
+2. Oracle text supports its assigned role — cite it from the working pool cache
 3. Color identity is within the chosen color constraint
 4. `card_pool_rules` are not violated
 
@@ -307,7 +317,7 @@ Example:
 
 ## Phase 6: Mana Audit Gate
 
-Convert the proposed deck to a list of card dicts (from `enriched.json` fields + merged tags).
+Convert the proposed deck to a list of card dicts (from the working pool cache + merged tags).
 
 Run `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)`.
 Display the report using `deck_audit.format_audit_report(audit)`.
@@ -340,16 +350,18 @@ Challenger evaluates sideboard cohesion in Phase 9.
 
 ---
 
-## Phase 8: Pre-Grill Check
+## Phase 8: Grill Input Bundle
 
-Before the self-grill, perform hard verification:
+Before spawning Phase 9 agents, write `_workspace/<deck-slug>_grill_input.json`. If the deck is not yet named, derive a slug from the color identity and strategy type (e.g., `bg-graveyard`).
 
-1. **Cube membership**: every card in main deck + sideboard exists in `enriched.json` by exact name
-2. **Oracle text coverage**: every card has a non-empty `oracle_text` in enriched.json
-3. **Restrictions compliance**: full check against `card_pool_rules` — produce checklist
-4. **Mana audit**: confirm audit result is not FAIL (re-run if deck changed since Phase 6)
+The bundle contains:
+- `deck`: array of all mainboard + sideboard cards, each with `name`, `oracle_text`, `colors`, `color_identity`, `cmc`, `type_line`, `rarity`, `role` (assigned in Phase 5), and `board`
+- `audit`: the mana audit result object from Phase 6
+- `card_pool_rules`: the confirmed pool rules object from Phase 0
+- `restrictions_checklist`: the compliance checklist built during Phase 5
+- `working_pool`: the full working pool array from the cache
 
-Remove any card failing check 1. Replace from the pool. Flag any oracle text gaps.
+Both Phase 9 agents read only this file — they do not read `enriched.json`, the working pool cache, or any other cube data file.
 
 ---
 
@@ -359,29 +371,33 @@ Spawn two parallel Agent calls. Neither agent sees the other's output during gen
 
 ### Proposer Agent
 
+Read `_workspace/<deck-slug>_grill_input.json` for all card data. Do not read `enriched.json` or any other cube data file.
+
 Defend the full deck list (main + sideboard). For every card:
 - State its role in the strategy
-- Quote `oracle_text` from enriched.json: `Oracle: "..."`
+- Quote `oracle_text` from the `deck` array in the grill bundle: `Oracle: "..."`
 - Confirm it fits the selected pipeline from Phase 3
 - Confirm it passes the `card_pool_rules` check
 - Confirm color identity is within constraint
 
 ### Challenger Agent
 
-Attack the deck independently:
-1. **Cube membership** — verify each card exists in enriched.json; flag any phantom inclusions (MUST be removed)
-2. **Oracle text** — read oracle text independently; does it actually do what Proposer claims?
-3. **Restrictions** — check every card against `card_pool_rules`; flag violations
+Read `_workspace/<deck-slug>_grill_input.json` for all card data. Do not read `enriched.json` or any other cube data file.
+
+Attack the deck independently. Challenger is the sole verifier for all hard checks — there is no pre-grill phase before this:
+1. **Cube membership** — verify each card exists in the `working_pool` array of the bundle by exact name; flag any phantom inclusions (MUST be removed)
+2. **Oracle text** — read `oracle_text` from the `deck` array in the bundle independently; does it actually do what Proposer claims?
+3. **Restrictions** — check every card against `card_pool_rules` from the bundle; flag violations
 4. **Identity fit** — does each card contribute to the selected pipeline? Suggest cuts that don't
-5. **Better alternatives** — is there a card in the cube pool that fills the slot more efficiently? Check enriched.json tags and oracle text
+5. **Better alternatives** — is there a card in the `working_pool` array of the bundle that fills the slot more efficiently? Check `taxonomic_profile` tags and `oracle_text` from the bundle
 6. **Proportional validation** — verify each slot allocation is within accepted MTG deckbuilding ranges for the stated strategy type. Flag any proportion that deviates significantly from convention without adequate rationale
 7. **Sideboard cohesion** — does the sideboard address realistic weaknesses? Are slots wasted?
-8. **Mana audit re-run** — independently run mana_audit on the list; report discrepancies
+8. **Mana audit re-run** — independently run mana_audit on the list using the `audit` key from the bundle as a reference; report discrepancies
 9. **Pipeline viability** — can this pipeline actually achieve its stated win condition with the available card pool? If not, state explicitly: **"This pipeline cannot achieve its stated win condition with the available card pool."**
 
 ### Resolve Grill
 
-- Proposer revises challenged slots using only cards from enriched.json
+- Proposer revises challenged slots using only cards from the `working_pool` array in the grill bundle
 - Challenger confirms each revision
 - Any card without confirmed cube membership must be removed
 - Final list must satisfy: all cards in cube + oracle text supports all roles + audit ≥ WARN
@@ -596,15 +612,15 @@ Saved:
 
 | Task | Tool / File |
 |------|-------------|
-| Load card pool (with pool rules) | `cube_search.load_merged_pool(id, card_pool_rules=...)` |
+| Load card pool (with pool rules) | `cube_search.load_merged_pool(id, card_pool_rules=...)` — Phase 0 only |
 | Filter by color/type/tag/CMC | `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` |
-| Query Payoff candidates | Filter pool by `taxonomic_profile.structural_roles` containing `"Payload/Payoff"` |
-| Query synergy support | Filter pool by `taxonomic_profile.synergy_clusters` overlap + `"Enabler/Fodder"` or `"Engine/Outlet"` in `structural_roles` |
+| Query Payoff candidates | Filter working pool cache by `taxonomic_profile.structural_roles` containing `"Payload/Payoff"` |
+| Query synergy support | Filter working pool cache by `taxonomic_profile.synergy_clusters` overlap + `"Enabler/Fodder"` or `"Engine/Outlet"` in `structural_roles` |
 | Find commander candidates | `commander_finder.find_commanders(id, color_identity)` |
 | Display commander table | `commander_finder.format_commanders_table(candidates)` |
 | Run mana audit | `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)` |
 | Display audit report | `deck_audit.format_audit_report(audit)` |
-| Verify card exists | Search `enriched.json` cards[] by exact name |
-| Read oracle text | `card.oracle_text` from enriched.json — never training data |
+| Verify card exists | Search working pool cache by exact name — never training data |
+| Read oracle text | `card.oracle_text` from working pool cache (main session) or grill bundle (Phase 9 agents) — never training data |
 | Write deck files | Write tool → `cubes/<id>/decks/<name>/deck.json` and `deck.tsv`. `exporter.write_mwdeck()` → `deck.mwDeck`. `exporter.write_deck_analysis_md()` → `analysis.md` |
 | Write a temp Python script | `_workspace/_tmp_<name>.py` — never to the repo root |
