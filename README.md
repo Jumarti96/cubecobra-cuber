@@ -270,7 +270,7 @@ Builds a deck from your cube in any supported format. Uses a discovery-first app
 - **Commander-100** — classic 100-card EDH
 
 **Phase flow:**
-- **Phase 0 — Card Pool Definition:** Optionally restrict the pool (copy limits per rarity, specific card exclusions). The skill infers a `card_pool_rules` object from natural language and confirms before proceeding.
+- **Phase 0 — Card Pool Definition:** Creates `_workspace/` and clears temp scripts from the previous run, then optionally restricts the pool (copy limits per rarity, specific card exclusions). The skill infers a `card_pool_rules` object from natural language and confirms before proceeding.
 - **Phase 1 — Interview:** Cube, format, optional color preference, intent (Competitive / Experimental / Fun / Specific Constraint), power level.
 - **Phase 2 — Discovery:** Finds Payoff/Payoff candidates via `taxonomic_profile.structural_roles`, validates each against Enabler/Fodder and Engine/Outlet counts per `synergy_clusters`, produces a viable pipeline shortlist.
 - **Phase 3 — Strategy Selection:** Shows the shortlist with a recommendation based on your intent. You accept, pick another, or describe your own constraint.
