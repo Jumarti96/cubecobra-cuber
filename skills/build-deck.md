@@ -285,17 +285,19 @@ Required format for every allocation:
 
 **Reference proportions by strategy type (starting points, not fixed targets).**
 
-Classify the selected pipeline into one Macro-Archetype, then read proportions for all slot categories from the table. State the classification and projected Average MV explicitly before allocating:
+Classify the selected pipeline into one Macro-Archetype (matching the tagger's `macro_archetypes` field), then read proportions for all slot categories from the table. State the classification and projected Average MV explicitly before allocating:
 > "Macro-Archetype: Midrange. Projected Avg MV: 2.4."
 
 Land % is of total deck size N. Non-land proportions are % of non-land cards.
 
-| Slot            | Hyper-Aggro | Tempo   | Combo/Storm | Midrange | Control | Ramp/Big Mana |
-|-----------------|-------------|---------|-------------|----------|---------|---------------|
-| Lands           | 30–33%      | 31–35%  | 32–38%      | 38–42%   | 43–47%  | 45–50%        |
-| Interaction     | 10–15%      | 15–20%  | 15–20%      | 20–25%   | 25–35%  | 10–15%        |
-| Threats/Payoffs | 35–45%      | 20–30%  | 20–30%      | 25–35%   | 15–20%  | 30–40%        |
-| Engine/Enablers | 10–20%      | 25–35%  | 25–35%      | 20–30%   | 20–30%  | 25–35%        |
+| Slot                  | Tempo   | Combo   | Aggro   | Midrange       | Control |
+|-----------------------|---------|---------|---------|----------------|---------|
+| Lands                 | 30–34%  | 30–36%  | 30–35%  | 38–42%         | 42–47%  |
+| Interaction           | 25–35%  | 10–20%  | 10–15%  | 20–30%         | 35–45%  |
+| Threats/Payoffs       | 10–18%  | 5–15%   | 45–55%  | 30–40%         | 5–10%   |
+| Engine & Infra.       | 20–30%  | 40–50%  | 0–10%   | 0% (absorbed)  | 10–20%  |
+
+**Midrange Engine & Infra. note:** Midrange does not reserve a separate Engine budget — the expectation is that Threats/Payoffs cards pull double duty. Prefer cards that generate value on their own, but don't reject a strong threat solely because it lacks explicit value text.
 
 The AI chooses proportions that fit the selected pipeline and defends them. These ranges are guidance; the rationale must justify any deviation.
 
