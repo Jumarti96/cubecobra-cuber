@@ -299,8 +299,6 @@ Land % is of total deck size N. Non-land proportions are % of non-land cards.
 
 **Midrange Engine & Infra. note:** Midrange does not reserve a separate Engine budget — the expectation is that Threats/Payoffs cards pull double duty. Prefer cards that generate value on their own, but don't reject a strong threat solely because it lacks explicit value text.
 
-**Ontological Blur:** Assign each card to exactly one slot based on its primary function. Do not fractionalize multi-role cards. A Cryptic Command is logged fully under Interaction; its card draw is a bonus, not a separate Engine allocation. Fractionalizing inflates quotas and produces incoherent builds.
-
 The AI chooses proportions that fit the selected pipeline and defends them. These ranges are guidance; the rationale must justify any deviation.
 
 **Then adjust the raw land count with these modifiers (state each even when 0):**
