@@ -283,16 +283,29 @@ All slot counts are derived as proportions of the total deck size N. State every
 Required format for every allocation:
 > "Lands: 15 (37.5% of N=40) — combo strategies run lean to fit more engine pieces; this deck generates additional mana via ritual effects."
 
-**Reference proportions by strategy type (starting points, not fixed targets):**
+**Reference proportions by strategy type (starting points, not fixed targets).**
 
-| Slot | Combo / Storm | Aggro | Midrange | Control |
-|------|--------------|-------|----------|---------|
-| Lands | 32–38% | 35–40% | 38–42% | 40–45% |
-| Interaction | 15–20% of non-land | 10–15% | 20–25% | 25–35% |
-| Threats / Payoffs | 20–30% of non-land | 35–45% | 25–35% | 15–20% |
-| Engine / Enablers | 25–35% of non-land | 10–20% | 20–30% | 20–30% |
+Classify the selected pipeline into one Macro-Archetype, then read proportions for all slot categories from the table. State the classification and projected Average MV explicitly before allocating:
+> "Macro-Archetype: Midrange. Projected Avg MV: 2.4."
+
+Land % is of total deck size N. Non-land proportions are % of non-land cards.
+
+| Slot            | Hyper-Aggro | Tempo   | Combo/Storm | Midrange | Control | Ramp/Big Mana |
+|-----------------|-------------|---------|-------------|----------|---------|---------------|
+| Lands           | 30–33%      | 31–35%  | 32–38%      | 38–42%   | 43–47%  | 45–50%        |
+| Interaction     | 10–15%      | 15–20%  | 15–20%      | 20–25%   | 25–35%  | 10–15%        |
+| Threats/Payoffs | 35–45%      | 20–30%  | 20–30%      | 25–35%   | 15–20%  | 30–40%        |
+| Engine/Enablers | 10–20%      | 25–35%  | 25–35%      | 20–30%   | 20–30%  | 25–35%        |
 
 The AI chooses proportions that fit the selected pipeline and defends them. These ranges are guidance; the rationale must justify any deviation.
+
+**Then adjust the raw land count with these modifiers (state each even when 0):**
+- **Cantrips:** −1 land per 3 one-mana filtering/draw spells (e.g. Opt, Preordain, Brainstorm)
+- **Mana dorks/rocks:** −0.5 land per 2 cheap non-land mana sources (MV ≤ 2)
+- **MDFCs with a land back:** −0.5 if spell side is situational; −0.3 if spell side is a primary engine piece
+
+State the final land count explicitly:
+> "Baseline: 16 (40% of N=40). Modifiers: −1 cantrip, −0 infra, −0 MDFC. Final: 15 lands."
 
 **Mana source allocation — derived from pip demand.**
 
