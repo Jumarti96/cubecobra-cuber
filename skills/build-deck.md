@@ -39,7 +39,16 @@ cuber tag <id>      ← required; taxonomic_profile drives pipeline discovery
 
 ## Phase 0: Card Pool Definition
 
-Before any analysis, establish what cards are available to the deck builder.
+### Workspace Setup
+
+Run at the very start of Phase 0, before any user prompts or analysis:
+
+1. Create `_workspace/` in the repo root if it does not exist
+2. Delete all `_workspace/_tmp_*.py` files left over from any previous run
+
+All temporary Python scripts written during this run go into `_workspace/` (e.g., `_workspace/_tmp_pool.py`, `_workspace/_tmp_audit.py`). No temp scripts are ever written to the repo root.
+
+### Pool Restrictions
 
 Ask the user (in natural language):
 > "Are there any pool restrictions? For example: up to 2 copies of commons and uncommons, only certain rares, or specific cards to exclude. Press Enter to use the full cube mainboard."
@@ -598,3 +607,4 @@ Saved:
 | Verify card exists | Search `enriched.json` cards[] by exact name |
 | Read oracle text | `card.oracle_text` from enriched.json — never training data |
 | Write deck files | Write tool → `cubes/<id>/decks/<name>/deck.json` and `deck.tsv`. `exporter.write_mwdeck()` → `deck.mwDeck`. `exporter.write_deck_analysis_md()` → `analysis.md` |
+| Write a temp Python script | `_workspace/_tmp_<name>.py` — never to the repo root |
