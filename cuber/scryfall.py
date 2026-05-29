@@ -32,7 +32,8 @@ CACHE_TTL_DAYS = 7
 BATCH_SIZE = 75
 RATE_DELAY = 0.11  # slightly over 100ms for safety
 
-DFC_LAYOUTS = {"transform", "modal_dfc", "reversible_card"}
+DFC_LAYOUTS = {"transform", "modal_dfc", "reversible_card"}  # layouts with a distinct back-face image
+MULTIFACE_LAYOUTS = DFC_LAYOUTS | {"split", "aftermath", "adventure", "flip"}
 
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
@@ -257,7 +258,7 @@ def _scryfall_to_card(row: Dict[str, str], sf: Dict[str, Any]) -> Card:
     layout = sf.get("layout", "")
     card_faces = None
 
-    if layout in DFC_LAYOUTS and "card_faces" in sf:
+    if layout in MULTIFACE_LAYOUTS and "card_faces" in sf:
         card_faces = [
             CardFace(
                 name=f.get("name", ""),
@@ -275,8 +276,8 @@ def _scryfall_to_card(row: Dict[str, str], sf: Dict[str, Any]) -> Card:
         type_line = sf["card_faces"][0].get("type_line", sf.get("type_line", ""))
         image_back = (
             sf["card_faces"][1].get("image_uris", {}).get("normal", "")
-            if len(sf["card_faces"]) > 1
-            else ""
+            if layout in DFC_LAYOUTS and len(sf["card_faces"]) > 1
+            else row.get("image Back URL", "")
         )
     else:
         oracle_text = sf.get("oracle_text", "")
