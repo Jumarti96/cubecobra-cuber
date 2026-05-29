@@ -136,6 +136,15 @@ def fuzzy_lookup(name: str, conn: Optional[sqlite3.Connection] = None) -> Option
             conn.close()
 
 
+def name_search(query: str) -> List[Dict]:
+    """Search Scryfall by fuzzy name. Returns a list with the best-match card, or empty list."""
+    try:
+        card = fuzzy_lookup(query)
+    except ScryfallNetworkError:
+        return []
+    return [card] if card is not None else []
+
+
 def lookup_cards(identifiers: List[Dict], refresh: bool = False) -> Tuple[List[Dict], List[str]]:
     """Batch-lookup cards by Scryfall identifier dicts. Returns (found_cards, missing_names).
 

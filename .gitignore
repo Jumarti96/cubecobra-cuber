@@ -43,3 +43,6 @@ openspec/
 
 # Temp scripts written by build-deck during a run (gitignored for all users)
 _workspace/
+
+# Current cube config (local only — do not commit)
+.cuber-config.json

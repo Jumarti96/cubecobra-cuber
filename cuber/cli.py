@@ -2,17 +2,33 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
+import re
+import shlex
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import typer
 
 from . import scryfall, stats as stats_mod, exporter, tagger, cubecobra
 from .cube import CUBES_DIR, find_cube_dir, load_cube_from_mainboard_csv, load_enriched, load_meta, save_enriched
-from .cube_manager import fetch_and_disassemble, add_cards, remove_cards, dedup_mainboard, cube_status, assemble_export, backfill_tags_to_mainboard, swap_card, add_cards_from_package
-from .cube_search import load_merged_pool, search_pool, format_search_results
+from .cube_manager import (
+    CONFIG_PATH,
+    fetch_and_disassemble,
+    add_cards,
+    remove_cards,
+    dedup_mainboard,
+    cube_status,
+    assemble_export,
+    backfill_tags_to_mainboard,
+    swap_card,
+    add_cards_from_package,
+    resolve_cube_id,
+    scale_cards,
+)
+from .cube_search import load_merged_pool, search_pool, format_search_results, fuzzy_name_search, format_search_card_results
 
 app = typer.Typer(
     name="cuber",
@@ -22,6 +38,29 @@ app = typer.Typer(
 
 packages_app = typer.Typer(name="packages", help="Browse and import CubeCobra packages.", no_args_is_help=True)
 app.add_typer(packages_app, name="packages")
+
+
+@app.command()
+def use(
+    cube_id: Optional[str] = typer.Argument(None, help="CubeCobra short ID or slug to set as current"),
+    clear: bool = typer.Option(False, "--clear", help="Remove the current cube config"),
+):
+    """Set the current working cube so you can omit <id> from other commands."""
+    if clear:
+        if os.path.exists(CONFIG_PATH):
+            os.remove(CONFIG_PATH)
+            typer.echo("Current cube cleared.")
+        else:
+            typer.echo("No current cube set.")
+        return
+
+    if not cube_id:
+        typer.echo("Provide a cube ID or use --clear.", err=True)
+        raise typer.Exit(1)
+
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump({"current": cube_id}, f)
+    typer.echo(f"Current cube set to: {cube_id}")
 
 
 @app.command()
@@ -39,10 +78,11 @@ def fetch(
 
 @app.command()
 def enrich(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     refresh: bool = typer.Option(False, "--refresh", help="Bypass Scryfall cache"),
 ):
     """Enrich cube cards with Scryfall metadata. Auto-fetches if not found."""
+    id_or_slug = resolve_cube_id(id_or_slug)
     try:
         cube_folder = find_cube_dir(id_or_slug)
         has_cards = any(
@@ -66,7 +106,7 @@ def enrich(
 
 @app.command()
 def stats(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     color: bool = typer.Option(False, "--color", help="Show color identity chart"),
     cmc: bool = typer.Option(False, "--cmc", help="Show CMC distribution chart"),
     rarity: bool = typer.Option(False, "--rarity", help="Show rarity chart"),
@@ -79,6 +119,7 @@ def stats(
     md: bool = typer.Option(False, "--md", help="Write exports/analysis.md with Markdown tables"),
 ):
     """Print cube stats with Unicode bar charts. Default shows 5 key charts."""
+    id_or_slug = resolve_cube_id(id_or_slug)
     try:
         cube = load_cube_from_mainboard_csv(id_or_slug)
     except FileNotFoundError as e:
@@ -166,10 +207,11 @@ def stats(
 
 @app.command()
 def tag(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace existing tags"),
 ):
     """AI-tag all cards using oracle text. Backfills tags to mainboard.csv."""
+    id_or_slug = resolve_cube_id(id_or_slug)
     try:
         cube = load_enriched(id_or_slug)
     except FileNotFoundError as e:
@@ -189,7 +231,7 @@ def tag(
 
 @app.command("add-card")
 def add_card(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     names: Optional[List[str]] = typer.Argument(None, help="Card name(s) to add"),
     from_file: Optional[str] = typer.Option(None, "--from-file", help="Text file with one card name per line"),
     stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
@@ -203,6 +245,7 @@ def add_card(
     Passing a name twice adds two copies. Use --count N to add N copies of each card.
     Cards are verified against Scryfall by default; use --no-verify to skip.
     """
+    id_or_slug = resolve_cube_id(id_or_slug)
     all_names: List[str] = list(names or [])
 
     if from_file:
@@ -264,12 +307,21 @@ def add_card(
 
 @app.command()
 def swap(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
-    old_name: str = typer.Argument(..., help="Card name to remove"),
-    new_name: str = typer.Argument(..., help="Card name to add (verified via Scryfall)"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
+    old_name: Optional[str] = typer.Argument(None, help="Card name to remove"),
+    new_name: Optional[str] = typer.Argument(None, help="Card name to add (verified via Scryfall)"),
     maybeboard: bool = typer.Option(False, "--maybeboard", help="Operate on maybeboard instead of mainboard"),
 ):
     """Atomically replace one card with another. New card is verified via Scryfall first."""
+    # Shift args when current cube is set: swap <old> <new> (2 positional)
+    if new_name is None and old_name is not None:
+        new_name = old_name
+        old_name = id_or_slug
+        id_or_slug = None
+    id_or_slug = resolve_cube_id(id_or_slug)
+    if not old_name or not new_name:
+        typer.echo("Provide old and new card names.", err=True)
+        raise typer.Exit(1)
     board = "maybeboard" if maybeboard else "mainboard"
     try:
         result = swap_card(id_or_slug, old_name, new_name, board=board)
@@ -291,7 +343,7 @@ def swap(
 
 @app.command("remove-card")
 def remove_card(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     names: Optional[List[str]] = typer.Argument(None, help="Card name(s) to remove"),
     from_file: Optional[str] = typer.Option(None, "--from-file", help="Text file with one card name per line"),
     stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
@@ -299,6 +351,7 @@ def remove_card(
     count: Optional[int] = typer.Option(None, "--count", help="Remove only this many copies (default: all copies)"),
 ):
     """Remove one or more cards from the cube mainboard (or maybeboard)."""
+    id_or_slug = resolve_cube_id(id_or_slug)
     all_names: List[str] = list(names or [])
 
     if from_file:
@@ -340,10 +393,11 @@ def remove_card(
 
 @app.command()
 def dedup(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     maybeboard: bool = typer.Option(False, "--maybeboard", help="Dedup maybeboard instead of mainboard"),
 ):
     """Remove duplicate card rows, keeping the first copy of each card."""
+    id_or_slug = resolve_cube_id(id_or_slug)
     board = "maybeboard" if maybeboard else "mainboard"
     try:
         result = dedup_mainboard(id_or_slug, board=board)
@@ -363,9 +417,10 @@ def dedup(
 
 @app.command()
 def status(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
 ):
     """Show cards added, removed, or retagged since last fetch."""
+    id_or_slug = resolve_cube_id(id_or_slug)
     try:
         diff = cube_status(id_or_slug)
     except FileNotFoundError as e:
@@ -401,10 +456,11 @@ def status(
 
 @app.command()
 def export(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     skip_scryfall: bool = typer.Option(False, "--skip-scryfall", help="Skip Scryfall validation (offline use)"),
 ):
     """Validate mainboard and assemble exports/import-ready.csv."""
+    id_or_slug = resolve_cube_id(id_or_slug)
     try:
         result = assemble_export(id_or_slug, skip_scryfall=skip_scryfall)
     except FileNotFoundError as e:
@@ -528,7 +584,7 @@ def list_cubes():
 
 @app.command()
 def search(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     color: Optional[str] = typer.Option(None, "--color", help="Color identity filter, e.g. W,U,B"),
     card_type: Optional[str] = typer.Option(None, "--type", help="Substring match on type line, e.g. creature"),
     cmc_min: Optional[float] = typer.Option(None, "--cmc-min", help="Minimum CMC (inclusive)"),
@@ -539,6 +595,7 @@ def search(
     limit: int = typer.Option(25, "--limit", help="Maximum number of results to show"),
 ):
     """Search the local enriched card pool by any combination of criteria."""
+    id_or_slug = resolve_cube_id(id_or_slug)
     try:
         pool = load_merged_pool(id_or_slug)
     except FileNotFoundError:
@@ -618,6 +675,582 @@ def diff(
     typer.echo(f"\nFull output: {out_path}")
 
 
+# ── Shorthand operators: + and rm ─────────────────────────────────────────────
+
+def _parse_count_modifier(args: List[str]) -> Tuple[List[str], int]:
+    """Detect trailing count modifier (x N, *N, xN) and return (card_names, count)."""
+    if len(args) >= 2 and args[-1].isdigit() and args[-2].lower() in ("x", "*"):
+        return args[:-2], int(args[-1])
+    if args and re.match(r"^[xX*]\d+$", args[-1]):
+        return args[:-1], int(args[-1][1:])
+    return args, 1
+
+
+@app.command("+")
+def add_shorthand(
+    names: Optional[List[str]] = typer.Argument(None, help="Card name(s) to add"),
+    from_file: Optional[str] = typer.Option(None, "--from-file", help="Text file with one card name per line"),
+    stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
+    maybeboard: bool = typer.Option(False, "--maybeboard", help="Add to maybeboard instead of mainboard"),
+    count: Optional[int] = typer.Option(None, "--count", help="Add this many copies of each card"),
+    no_verify: bool = typer.Option(False, "--no-verify", help="Skip Scryfall verification"),
+):
+    """Shorthand for add-card using the current cube. Supports inline x N / *N count modifier."""
+    id_or_slug = resolve_cube_id(None)
+    all_names: List[str] = list(names or [])
+
+    if from_file:
+        try:
+            with open(from_file, encoding="utf-8") as f:
+                all_names.extend(line.strip() for line in f if line.strip())
+        except FileNotFoundError:
+            typer.echo(f"File not found: {from_file}", err=True)
+            raise typer.Exit(1)
+
+    if stdin:
+        all_names.extend(line.strip() for line in sys.stdin if line.strip())
+
+    if not all_names:
+        typer.echo("No card names provided. Use positional args, --from-file, or --stdin.", err=True)
+        raise typer.Exit(1)
+
+    if count is None:
+        all_names, count = _parse_count_modifier(all_names)
+        if count < 1:
+            count = 1
+    else:
+        all_names, _ = _parse_count_modifier(all_names)
+
+    if count > 1:
+        all_names = [name for name in all_names for _ in range(count)]
+
+    board = "maybeboard" if maybeboard else "mainboard"
+    try:
+        result = add_cards(id_or_slug, all_names, board=board, verify=not no_verify)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    if result["added"]:
+        typer.echo(f"Added to {board} ({len(result['added'])}):")
+        for name in result["added"]:
+            typer.echo(f"  + {name}")
+    for c in result.get("corrections", []):
+        typer.echo(f'  "{c["input"]}" -> added as "{c["canonical"]}"')
+    if result.get("not_found"):
+        typer.echo(f"\nNot found on Scryfall ({len(result['not_found'])}) — not added:")
+        for name in result["not_found"]:
+            typer.echo(f"  ? {name}")
+    if result["added"] and not result.get("unverified"):
+        typer.echo(f"\nRun `cuber enrich {id_or_slug}` to hydrate new cards with Scryfall data.")
+
+
+@app.command("rm")
+def remove_shorthand(
+    names: Optional[List[str]] = typer.Argument(None, help="Card name(s) to remove"),
+    from_file: Optional[str] = typer.Option(None, "--from-file", help="Text file with one card name per line"),
+    stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
+    maybeboard: bool = typer.Option(False, "--maybeboard", help="Remove from maybeboard instead of mainboard"),
+    count: Optional[int] = typer.Option(None, "--count", help="Remove only this many copies (default: all copies)"),
+):
+    """Shorthand for remove-card using the current cube. Supports inline x N / *N count modifier."""
+    id_or_slug = resolve_cube_id(None)
+    all_names: List[str] = list(names or [])
+
+    if from_file:
+        try:
+            with open(from_file, encoding="utf-8") as f:
+                all_names.extend(line.strip() for line in f if line.strip())
+        except FileNotFoundError:
+            typer.echo(f"File not found: {from_file}", err=True)
+            raise typer.Exit(1)
+
+    if stdin:
+        all_names.extend(line.strip() for line in sys.stdin if line.strip())
+
+    if not all_names:
+        typer.echo("No card names provided. Use positional args, --from-file, or --stdin.", err=True)
+        raise typer.Exit(1)
+
+    if count is None:
+        all_names, inline_count = _parse_count_modifier(all_names)
+        count = inline_count if inline_count > 1 else None
+    else:
+        all_names, _ = _parse_count_modifier(all_names)
+
+    board = "maybeboard" if maybeboard else "mainboard"
+    try:
+        result = remove_cards(id_or_slug, all_names, board=board, count=count)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    if result["removed"]:
+        label = f"(each: {count} cop{'y' if count == 1 else 'ies'})" if count else "(all copies)"
+        typer.echo(f"Removed from {board} {label} ({len(result['removed'])}):")
+        for name in result["removed"]:
+            n = result["removed_counts"].get(name.strip().lower(), 1)
+            typer.echo(f"  - {name}" + (f" x{n}" if n > 1 else ""))
+    if result["not_found"]:
+        typer.echo(f"Not found ({len(result['not_found'])}):")
+        for name in result["not_found"]:
+            typer.echo(f"  ? {name}")
+
+
+# ── Scale operators: x and div ─────────────────────────────────────────────────
+
+@app.command("x")
+def scale_multiply(
+    factor: int = typer.Argument(..., help="Multiplication factor (≥ 2)"),
+    names: Optional[List[str]] = typer.Argument(None, help="Card name(s) to scale"),
+    id_or_slug: Optional[str] = typer.Option(None, "--cube", help="Cube ID (overrides current cube)"),
+    maybeboard: bool = typer.Option(False, "--maybeboard", help="Operate on maybeboard"),
+):
+    """Multiply existing copy counts by N. cuber x 2 'Serra Angel' doubles its copies."""
+    if factor < 2:
+        typer.echo("Factor must be at least 2.", err=True)
+        raise typer.Exit(1)
+    id_or_slug = resolve_cube_id(id_or_slug)
+    if not names:
+        typer.echo("Provide at least one card name.", err=True)
+        raise typer.Exit(1)
+    board = "maybeboard" if maybeboard else "mainboard"
+    try:
+        result = scale_cards(id_or_slug, list(names), factor, "multiply", board=board)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    for entry in result["scaled"]:
+        typer.echo(f"  {entry['name']}: {entry['before']} → {entry['after']} copies")
+    for name in result["not_found"]:
+        typer.echo(f"  {name}: not in cube — skipped")
+
+
+@app.command("div")
+def scale_divide(
+    factor: int = typer.Argument(..., help="Division factor (≥ 2)"),
+    names: Optional[List[str]] = typer.Argument(None, help="Card name(s) to scale"),
+    id_or_slug: Optional[str] = typer.Option(None, "--cube", help="Cube ID (overrides current cube)"),
+    maybeboard: bool = typer.Option(False, "--maybeboard", help="Operate on maybeboard"),
+):
+    """Divide existing copy counts by N (floor). Prompts before removing last copy."""
+    if factor < 2:
+        typer.echo("Factor must be at least 2.", err=True)
+        raise typer.Exit(1)
+    id_or_slug = resolve_cube_id(id_or_slug)
+    if not names:
+        typer.echo("Provide at least one card name.", err=True)
+        raise typer.Exit(1)
+    board = "maybeboard" if maybeboard else "mainboard"
+
+    # Pre-screen for zero-result cards and prompt before applying
+    import math as _math
+    cube_folder = find_cube_dir(id_or_slug)
+    csv_path = os.path.join(cube_folder, "mainboard.csv" if board == "mainboard" else "maybeboard.csv")
+    counts: Dict[str, int] = {}
+    if os.path.exists(csv_path):
+        with open(csv_path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                n = row.get("name", "").strip()
+                if n:
+                    counts[n.lower()] = counts.get(n.lower(), 0) + 1
+
+    confirmed_names: List[str] = []
+    for name in names:
+        key = name.strip().lower()
+        current = counts.get(key, 0)
+        if current == 0:
+            continue  # scale_cards will report not_found
+        new_count = _math.floor(current / factor)
+        if new_count == 0:
+            answer = typer.confirm(
+                f"{name}: {current} → 0 copies (will remove from cube). Proceed?",
+                default=False,
+            )
+            if not answer:
+                typer.echo(f"  Skipped {name}.")
+                continue
+        confirmed_names.append(name)
+
+    if not confirmed_names:
+        typer.echo("No cards to scale.")
+        return
+
+    try:
+        result = scale_cards(id_or_slug, confirmed_names, factor, "divide", board=board)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    for entry in result["scaled"]:
+        typer.echo(f"  {entry['name']}: {entry['before']} → {entry['after']} copies")
+    for name in result["not_found"]:
+        typer.echo(f"  {name}: not in cube — skipped")
+
+
+# ── search-card ────────────────────────────────────────────────────────────────
+
+@app.command("search-card")
+def search_card(
+    query: str = typer.Argument(..., help="Card name to search for (substring match)"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
+    color: Optional[str] = typer.Option(None, "--color", help="Color identity filter, e.g. W,U"),
+    card_type: Optional[str] = typer.Option(None, "--type", help="Substring match on type line"),
+    cmc_min: Optional[float] = typer.Option(None, "--cmc-min", help="Minimum CMC (inclusive)"),
+    cmc_max: Optional[float] = typer.Option(None, "--cmc-max", help="Maximum CMC (inclusive)"),
+    rarity: Optional[str] = typer.Option(None, "--rarity", help="Exact rarity: common/uncommon/rare/mythic"),
+    use_scryfall: bool = typer.Option(False, "--scryfall", help="Skip cube and search Scryfall directly"),
+):
+    """Fuzzy name search within the cube. Falls back to Scryfall when not found."""
+    id_or_slug = resolve_cube_id(id_or_slug)
+
+    if use_scryfall:
+        cards = scryfall.name_search(query)
+        if not cards:
+            typer.echo("Not found on Scryfall.")
+        else:
+            typer.echo(format_search_card_results(cards))
+        return
+
+    try:
+        pool = load_merged_pool(id_or_slug)
+    except FileNotFoundError:
+        typer.echo(f"enriched.json not found — run cuber enrich {id_or_slug} first", err=True)
+        raise typer.Exit(1)
+
+    results = fuzzy_name_search(pool, query)
+
+    # Apply filters
+    if color:
+        ci_filter = {c.strip().upper() for c in color.split(",")}
+        results = [c for c in results if set(c.get("color_identity") or []).issubset(ci_filter)]
+    if card_type:
+        results = [c for c in results if card_type.lower() in (c.get("type_line") or "").lower()]
+    if rarity:
+        results = [c for c in results if (c.get("rarity") or "").lower() == rarity.lower()]
+    if cmc_min is not None:
+        results = [c for c in results if float(c.get("cmc") or 0) >= cmc_min]
+    if cmc_max is not None:
+        results = [c for c in results if float(c.get("cmc") or 0) <= cmc_max]
+
+    if results:
+        typer.echo(format_search_card_results(results))
+        return
+
+    # Not found in cube — offer Scryfall fallback
+    answer = typer.confirm("Not found in cube — search Scryfall?", default=False)
+    if answer:
+        cards = scryfall.name_search(query)
+        if not cards:
+            typer.echo("Not found on Scryfall either.")
+        else:
+            typer.echo(format_search_card_results(cards))
+
+
+# ── ops REPL ───────────────────────────────────────────────────────────────────
+
+def _ops_tokenize(line: str) -> Tuple[str, List[str], int]:
+    """Parse a REPL input line. Returns (operator, card_names, modifier).
+
+    operator: one of +, -, *, /, list, undo, reset, done, quit
+    modifier: count for +/-, factor for *//, undo index for undo, else 0
+    """
+    try:
+        tokens = shlex.split(line.strip())
+    except ValueError:
+        return ("error", [], 0)
+
+    if not tokens:
+        return ("empty", [], 0)
+
+    raw_op = tokens[0]
+    op = raw_op.lower()
+    rest = tokens[1:]
+
+    # Normalize aliases
+    alias_map = {"ls": "list", "apply": "done", "exit": "quit"}
+    op = alias_map.get(op, op)
+
+    if op in ("quit", "list", "reset"):
+        return (op, [], 0)
+
+    if op == "done":
+        return ("done", [], 0)
+
+    if op == "undo":
+        idx = int(rest[0]) if rest and rest[0].isdigit() else 0
+        return ("undo", [], idx)
+
+    # Scale operators: first rest token is the factor
+    if raw_op in ("*", "/"):
+        if not rest or not rest[0].isdigit():
+            return ("error", [], 0)
+        factor = int(rest[0])
+        names = rest[1:]
+        names, _ = _parse_count_modifier(names)
+        return (raw_op, names, factor)
+
+    if raw_op in ("+", "-"):
+        names, count = _parse_count_modifier(rest)
+        return (raw_op, names, count)
+
+    return ("unknown", [], 0)
+
+
+def _ops_validate_add(names: List[str], _id_or_slug: str) -> Tuple[List[str], List[str]]:
+    """Scryfall-verify add candidates. Returns (valid_canonical, invalid)."""
+    valid: List[str] = []
+    invalid: List[str] = []
+    for name in names:
+        try:
+            card = scryfall.fuzzy_lookup(name)
+        except scryfall.ScryfallNetworkError:
+            valid.append(name)
+            continue
+        if card is None:
+            invalid.append(name)
+        else:
+            valid.append(card["name"])
+    return valid, invalid
+
+
+def _ops_validate_remove(names: List[str], id_or_slug: str) -> Tuple[List[str], List[str]]:
+    """Check names against mainboard.csv. Returns (found, not_found)."""
+    try:
+        cube_folder = find_cube_dir(id_or_slug)
+    except FileNotFoundError:
+        return [], names[:]
+    csv_path = os.path.join(cube_folder, "mainboard.csv")
+    in_cube: set = set()
+    if os.path.exists(csv_path):
+        with open(csv_path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                n = row.get("name", "").strip()
+                if n:
+                    in_cube.add(n.lower())
+    found = [n for n in names if n.strip().lower() in in_cube]
+    not_found = [n for n in names if n.strip().lower() not in in_cube]
+    return found, not_found
+
+
+def _ops_cube_counts(id_or_slug: str) -> Dict[str, int]:
+    """Return {name_lower: copy_count} from mainboard.csv."""
+    try:
+        cube_folder = find_cube_dir(id_or_slug)
+    except FileNotFoundError:
+        return {}
+    csv_path = os.path.join(cube_folder, "mainboard.csv")
+    counts: Dict[str, int] = {}
+    if not os.path.exists(csv_path):
+        return counts
+    with open(csv_path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            n = row.get("name", "").strip()
+            if n:
+                counts[n.lower()] = counts.get(n.lower(), 0) + 1
+    return counts
+
+
+def _ops_print_staged(staging: List[Dict]) -> None:
+    if not staging:
+        typer.echo("No operations staged.")
+        return
+    for i, entry in enumerate(staging, 1):
+        for line in entry["display_lines"]:
+            typer.echo(f"  [{i}] {line}")
+
+
+def _ops_net_delta(staging: List[Dict]) -> int:
+    return sum(e.get("delta", 0) for e in staging)
+
+
+@app.command("ops")
+def ops(
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
+):
+    """Interactive REPL for staging and applying batch cube edits.
+
+    Operators: + (add), - (remove), * N (scale up), / N (scale down)
+    Control: list, undo [N], reset, done, quit
+    Card names with spaces must be quoted: + "Serra Angel"
+    """
+    import math as _math
+
+    id_or_slug = resolve_cube_id(id_or_slug)
+    staging: List[Dict] = []
+
+    typer.echo(f"ops ({id_or_slug})> type + - * / list undo reset done quit")
+    typer.echo("  Card names with spaces must be quoted: + \"Serra Angel\"")
+
+    while True:
+        try:
+            line = input("ops> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            discarded = len(staging)
+            if discarded:
+                typer.echo(f"\nExited without applying. {discarded} operation(s) discarded.")
+            else:
+                typer.echo("")
+            break
+
+        if not line:
+            continue
+
+        op, names, modifier = _ops_tokenize(line)
+
+        if op == "quit":
+            discarded = len(staging)
+            if discarded:
+                typer.echo(f"Exited without applying. {discarded} operation(s) discarded.")
+            break
+
+        if op == "list":
+            _ops_print_staged(staging)
+            if staging:
+                delta = _ops_net_delta(staging)
+                sign = "+" if delta >= 0 else ""
+                typer.echo(f"  Net: {sign}{delta} card(s)")
+            continue
+
+        if op == "reset":
+            staging.clear()
+            typer.echo("All staged operations cleared.")
+            continue
+
+        if op == "undo":
+            if not staging:
+                typer.echo("Nothing to undo.")
+                continue
+            idx = modifier if modifier else len(staging)
+            if idx < 1 or idx > len(staging):
+                typer.echo(f"Index {idx} out of range (1–{len(staging)}).")
+                continue
+            removed = staging.pop(idx - 1)
+            typer.echo(f"Removed [{idx}]: {removed['display_lines'][0]}")
+            continue
+
+        if op == "done":
+            if not staging:
+                typer.echo("Nothing staged — nothing to apply.")
+                break
+
+            _ops_print_staged(staging)
+            delta = _ops_net_delta(staging)
+            sign = "+" if delta >= 0 else ""
+            typer.echo(f"  Net: {sign}{delta} card(s)")
+            if not typer.confirm("Apply?", default=False):
+                typer.echo("Cancelled. Continuing...")
+                continue
+
+            applied = 0
+            for entry in staging:
+                eop = entry["op"]
+                enames = entry["names"]
+                ecount = entry.get("count")
+                efactor = entry.get("factor")
+                try:
+                    if eop == "+":
+                        add_count = ecount or 1
+                        all_add = [n for n in enames for _ in range(add_count)]
+                        add_cards(id_or_slug, all_add, board="mainboard", verify=False)
+                    elif eop == "-":
+                        remove_cards(id_or_slug, enames, board="mainboard", count=ecount)
+                    elif eop == "*":
+                        scale_cards(id_or_slug, enames, efactor, "multiply", board="mainboard")
+                    elif eop == "/":
+                        scale_cards(id_or_slug, enames, efactor, "divide", board="mainboard")
+                    applied += 1
+                except Exception as exc:
+                    typer.echo(f"  Error applying {entry['display_lines'][0]}: {exc}", err=True)
+
+            typer.echo(f"Applied {applied}/{len(staging)} operation(s).")
+            break
+
+        if op == "error" or op == "unknown":
+            typer.echo("  Unknown command. Use + - * / list undo reset done quit.")
+            continue
+
+        if op == "empty":
+            continue
+
+        # Staging logic
+        counts = _ops_cube_counts(id_or_slug)
+
+        if op == "+":
+            if not names:
+                typer.echo("  Provide card name(s) after +.")
+                continue
+            valid, invalid = _ops_validate_add(names, id_or_slug)
+            for bad in invalid:
+                typer.echo(f'  ✗ "{bad}" — not found on Scryfall. Skipped.')
+            if not valid:
+                continue
+            count = modifier if modifier > 1 else 1
+            delta = len(valid) * count
+            display_lines = [f"add {n} ×{count}" for n in valid]
+            staging.append({"op": "+", "names": valid, "count": count, "factor": None,
+                            "delta": delta, "display_lines": display_lines})
+            for dl in display_lines:
+                typer.echo(f"  ✓ Staged: {dl}")
+
+        elif op == "-":
+            if not names:
+                typer.echo("  Provide card name(s) after -.")
+                continue
+            found, not_found = _ops_validate_remove(names, id_or_slug)
+            for bad in not_found:
+                typer.echo(f'  ✗ "{bad}" — not in cube. Skipped.')
+            if not found:
+                continue
+            count = modifier if modifier > 1 else None
+            delta = 0
+            display_lines = []
+            for n in found:
+                if count:
+                    display_lines.append(f"remove {n} ×{count}")
+                    delta -= count
+                else:
+                    current = counts.get(n.lower(), 1)
+                    display_lines.append(f"remove {n} (all copies)")
+                    delta -= current
+            staging.append({"op": "-", "names": found, "count": count, "factor": None,
+                            "delta": delta, "display_lines": display_lines})
+            for dl in display_lines:
+                typer.echo(f"  ✓ Staged: {dl}")
+
+        elif op in ("*", "/"):
+            factor = modifier
+            if factor < 2:
+                typer.echo("  Factor must be at least 2.")
+                continue
+            if not names:
+                typer.echo(f"  Provide card name(s) after {op} {factor}.")
+                continue
+            found, not_found = _ops_validate_remove(names, id_or_slug)
+            for bad in not_found:
+                typer.echo(f'  ✗ "{bad}" — not in cube. Skipped.')
+            if not found:
+                continue
+            display_lines = []
+            delta = 0
+            for n in found:
+                current = counts.get(n.lower(), 0)
+                if op == "*":
+                    new_count = current * factor
+                else:
+                    new_count = _math.floor(current / factor)
+                    if new_count == 0:
+                        typer.echo(f"  ⚠ {n}: {current} → 0 copies (will remove from cube)")
+                d = new_count - current
+                delta += d
+                display_lines.append(f"scale {n} ×{factor} ({current} → {new_count})")
+            staging.append({"op": op, "names": found, "count": None, "factor": factor,
+                            "delta": delta, "display_lines": display_lines})
+            for dl in display_lines:
+                typer.echo(f"  ✓ Staged: {dl}")
+
+
 # ── Packages ──────────────────────────────────────────────────────────────────
 
 @packages_app.command("search")
@@ -662,11 +1295,19 @@ def packages_search(
 
 @app.command("add-package")
 def add_package_cmd(
-    id_or_slug: str = typer.Argument(..., help="CubeCobra short ID or cube slug"),
-    package_id: str = typer.Argument(..., help="CubeCobra package ID"),
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
+    package_id: Optional[str] = typer.Argument(None, help="CubeCobra package ID"),
     allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Add cards even if already in cube"),
 ):
     """Fetch a CubeCobra package and add all its cards to the cube."""
+    # Shift args when current cube is set: add-package <pkg-id> (1 positional)
+    if package_id is None and id_or_slug is not None:
+        package_id = id_or_slug
+        id_or_slug = None
+    id_or_slug = resolve_cube_id(id_or_slug)
+    if not package_id:
+        typer.echo("Provide a package ID.", err=True)
+        raise typer.Exit(1)
     try:
         pkg = cubecobra.fetch_package_by_id(package_id)
     except RuntimeError as e:
