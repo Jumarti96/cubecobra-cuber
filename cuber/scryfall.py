@@ -283,10 +283,6 @@ def _scryfall_to_card(row: Dict[str, str], sf: Dict[str, Any]) -> Card:
         type_line = sf.get("type_line", "")
         image_back = row.get("image Back URL", "")
 
-    # Existing tags from the CSV row (may have been manually set)
-    raw_tags = row.get("tags", "")
-    existing_tags = [t.strip() for t in raw_tags.split(";") if t.strip()]
-
     return Card(
         name=sf.get("name", row.get("name", "")),
         scryfall_id=sf.get("id", ""),
@@ -308,7 +304,6 @@ def _scryfall_to_card(row: Dict[str, str], sf: Dict[str, Any]) -> Card:
         mana_cost=sf.get("mana_cost"),
         layout=layout or None,
         image_back_url=image_back or None,
-        tags=existing_tags,
         notes=row.get("Notes") or None,
         mtgo_id=str(sf.get("mtgo_id", row.get("MTGO ID", ""))) or None,
         card_faces=card_faces,
