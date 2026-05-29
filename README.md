@@ -253,7 +253,9 @@ Does **not** require a separate `cuber tag` run — this skill is the interactiv
 
 ### `/analyze-cube <id>`
 
-Full statistics dashboard: color distribution, CMC curve, rarity, card types, and archetype tag density. All metrics are informational — no thresholds trigger errors or warnings.
+Full stats dashboard plus deep environmental analysis: color distribution, CMC curve, rarity, card types, archetype tag density, environment characterization, archetype viability matrix, per-color breakdown, mana and fixing inventory, interaction density, drafting signals, and notable cards. All metrics are informational — no thresholds trigger errors or warnings. Requires `enriched.json`; tag-dependent sections (archetype matrix, interaction density, notable cards) additionally require `cuber tag <id>`.
+
+After the analysis, optionally generates a formatted **primer document** for the cube. You choose which of 7 sections to include; the skill writes to `primer.md` (or `primer_ai.md` if you decline to overwrite an existing primer).
 
 **Example:** `/analyze-cube obc`
 

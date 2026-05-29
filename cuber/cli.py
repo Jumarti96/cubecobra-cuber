@@ -446,6 +446,8 @@ def export(
             typer.echo(f"  ! {w}")
 
     typer.echo(f"\n{result['card_count']} cards -> {result['path']}")
+    if result.get("primer_path"):
+        typer.echo(f"primer.md   -> {result['primer_path']}")
     typer.echo(f"Export log: {result['log_path']}")
     typer.echo("\nTo import into CubeCobra:")
     typer.echo("  1. Go to your cube on CubeCobra")

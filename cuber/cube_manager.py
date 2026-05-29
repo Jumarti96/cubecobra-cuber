@@ -721,6 +721,13 @@ def assemble_export(id_or_slug: str, skip_scryfall: bool = False) -> Dict[str, A
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump(log_entries, f, indent=2, ensure_ascii=False)
 
+    primer_src = os.path.join(cube_folder, "primer.md")
+    primer_export_path: Optional[str] = None
+    if os.path.exists(primer_src):
+        primer_dst = os.path.join(exports_dir, "primer.md")
+        shutil.copy2(primer_src, primer_dst)
+        primer_export_path = primer_dst
+
     return {
         "path": out_path,
         "card_count": len(rows),
@@ -728,6 +735,7 @@ def assemble_export(id_or_slug: str, skip_scryfall: bool = False) -> Dict[str, A
         "warnings": warnings,
         "diff": diff,
         "log_path": log_path,
+        "primer_path": primer_export_path,
     }
 
 
