@@ -304,6 +304,43 @@ def search_pool(
     return results
 
 
+def fuzzy_name_search(pool: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+    """Return all cards in pool whose name contains query (case-insensitive)."""
+    q = query.lower()
+    return [c for c in pool if q in (c.get("name") or "").lower()]
+
+
+def format_search_card_results(cards: List[Dict[str, Any]]) -> str:
+    """ASCII table: Name, CMC, CI, Type, Rarity, Scryfall URL."""
+    if not cards:
+        return "No cards found."
+
+    name_w = min(max((len(c.get("name") or "") for c in cards), default=4), 32)
+    type_w = 28
+
+    header = (
+        f"{'Name':<{name_w}}  {'CMC':<3}  {'CI':<6}  "
+        f"{'Type':<{type_w}}  {'Rarity':<9}  Scryfall URL"
+    )
+    sep = "-" * (name_w + 3 + 6 + type_w + 9 + 70 + 14)
+    lines = [header, sep]
+
+    for card in cards:
+        name = (card.get("name") or "")[:name_w]
+        cmc = str(int(float(card.get("cmc") or 0)))
+        ci = "".join(card.get("color_identity") or []) or "C"
+        type_line = (card.get("type_line") or "")[:type_w]
+        rarity = (card.get("rarity") or "").capitalize()[:9]
+        card_name = card.get("name") or ""
+        url = f'https://scryfall.com/search?q=!"{card_name}"'
+        lines.append(
+            f"{name:<{name_w}}  {cmc:<3}  {ci:<6}  "
+            f"{type_line:<{type_w}}  {rarity:<9}  {url}"
+        )
+
+    return "\n".join(lines)
+
+
 def format_search_results(cards: List[Dict[str, Any]], limit: int = 25) -> str:
     """Return a compact ASCII table: Name | CI | CMC | Rarity | Tags | Oracle excerpt."""
     if not cards:

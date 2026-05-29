@@ -4,15 +4,40 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
 import re
 import shutil
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import typer
+
 from .cube import CUBES_DIR, CUBECOBRA_CSV_COLUMNS, Card, Cube, find_cube_dir, load_enriched, save_enriched, cube_dir, load_meta
 from .cubecobra import _fetch_url
 from .scryfall import fuzzy_lookup, ScryfallNetworkError
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".cuber-config.json")
+
+
+def resolve_cube_id(explicit: Optional[str]) -> str:
+    """Return the cube ID to use, or exit with an error message if none available."""
+    if explicit:
+        return explicit
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+            current = data.get("current")
+            if current:
+                return current
+        except (json.JSONDecodeError, OSError):
+            pass
+    typer.echo(
+        "No cube specified and no current cube set. Run `cuber use <id>` or pass the cube ID.",
+        err=True,
+    )
+    raise typer.Exit(1)
 
 
 # ── Slug utilities ─────────────────────────────────────────────────────────────
@@ -961,3 +986,66 @@ def swap_card(
         "added": canonical,
         "correction": correction,
     }
+
+
+# ── scale-cards ────────────────────────────────────────────────────────────────
+
+def scale_cards(
+    id_or_slug: str,
+    names: List[str],
+    factor: int,
+    operation: str,
+    board: str = "mainboard",
+) -> Dict[str, Any]:
+    """Scale card copy counts by multiplying or dividing existing counts.
+
+    operation: "multiply" or "divide"
+    Returns {scaled: [{name, before, after}], not_found: [...], zero_removals: [{name, before}]}.
+    zero_removals are cards that were scaled to 0 and fully removed.
+    """
+    cube_folder = find_cube_dir(id_or_slug)
+    csv_filename = "mainboard.csv" if board == "mainboard" else "maybeboard.csv"
+    csv_path = os.path.join(cube_folder, csv_filename)
+
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"{csv_filename} not found in {cube_folder}")
+
+    copy_counts: Dict[str, int] = {}
+    canonical_names: Dict[str, str] = {}
+    with open(csv_path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            name = row.get("name", "").strip()
+            if name:
+                key = name.lower()
+                copy_counts[key] = copy_counts.get(key, 0) + 1
+                canonical_names[key] = name
+
+    scaled = []
+    not_found = []
+    zero_removals = []
+
+    for raw_name in names:
+        key = raw_name.strip().lower()
+        if key not in copy_counts:
+            not_found.append(raw_name.strip())
+            continue
+
+        current = copy_counts[key]
+        card_name = canonical_names[key]
+
+        if operation == "multiply":
+            new_count = current * factor
+            delta = new_count - current
+            if delta > 0:
+                add_cards(id_or_slug, [card_name] * delta, board=board, verify=False)
+        else:
+            new_count = math.floor(current / factor)
+            delta = current - new_count
+            if new_count == 0:
+                zero_removals.append({"name": card_name, "before": current})
+            if delta > 0:
+                remove_cards(id_or_slug, [card_name], board=board, count=delta)
+
+        scaled.append({"name": card_name, "before": current, "after": new_count})
+
+    return {"scaled": scaled, "not_found": not_found, "zero_removals": zero_removals}
