@@ -348,9 +348,11 @@ def remove_card(
     from_file: Optional[str] = typer.Option(None, "--from-file", help="Text file with one card name per line"),
     stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
     maybeboard: bool = typer.Option(False, "--maybeboard", help="Remove from maybeboard instead of mainboard"),
-    count: Optional[int] = typer.Option(None, "--count", help="Remove only this many copies (default: all copies)"),
+    count: Optional[int] = typer.Option(None, "--count", help="Remove only this many copies (default: 1 copy)"),
+    all_copies: bool = typer.Option(False, "--all", help="Remove all copies of each named card"),
 ):
-    """Remove one or more cards from the cube mainboard (or maybeboard)."""
+    """Remove one or more cards from the cube mainboard (or maybeboard).
+    By default removes 1 copy of each card. Use --all to remove all copies."""
     id_or_slug = resolve_cube_id(id_or_slug)
     all_names: List[str] = list(names or [])
 
@@ -372,15 +374,29 @@ def remove_card(
         )
         raise typer.Exit(1)
 
+    # Resolve count: --all means remove all (count=None to trigger remove_cards default=1... wait)
+    # Actually, remove_cards now defaults to 1. To remove all, we need count=None AND a flag.
+    # But count=None now means "use default (1)". So --all needs to pass 0 or we need another mechanism.
+    # Let's keep it simple: --all sets count to 0 which remove_cards will interpret as "all"
+    # Wait, that changes remove_cards logic. Better: add explicit all flag handling.
+    actual_count = None if all_copies else (count if count is not None else 1)
+
     board = "maybeboard" if maybeboard else "mainboard"
     try:
-        result = remove_cards(id_or_slug, all_names, board=board, count=count)
+        result = remove_cards(id_or_slug, all_names, board=board, count=actual_count)
     except FileNotFoundError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
     if result["removed"]:
-        label = f"(each: {count} cop{'y' if count == 1 else 'ies'})" if count else "(all copies)"
+        if all_copies:
+            label = "(all copies)"
+        elif count == 1:
+            label = "(1 copy each)"
+        elif count is not None:
+            label = f"({count} cop{'y' if count == 1 else 'ies'} each)"
+        else:
+            label = "(1 copy each)"
         typer.echo(f"Removed from {board} {label} ({len(result['removed'])}):")
         for name in result["removed"]:
             n = result["removed_counts"].get(name.strip().lower(), 1)
@@ -677,13 +693,16 @@ def diff(
 
 # ── Shorthand operators: + and rm ─────────────────────────────────────────────
 
-def _parse_count_modifier(args: List[str]) -> Tuple[List[str], int]:
-    """Detect trailing count modifier (x N, *N, xN) and return (card_names, count)."""
+def _parse_count_modifier(args: List[str]) -> Tuple[List[str], Optional[int]]:
+    """Detect trailing count modifier (x N, *N, xN) and return (card_names, count).
+
+    Returns count=None when no modifier is present.
+    """
     if len(args) >= 2 and args[-1].isdigit() and args[-2].lower() in ("x", "*"):
         return args[:-2], int(args[-1])
     if args and re.match(r"^[xX*]\d+$", args[-1]):
         return args[:-1], int(args[-1][1:])
-    return args, 1
+    return args, None
 
 
 @app.command("+")
@@ -716,7 +735,7 @@ def add_shorthand(
 
     if count is None:
         all_names, count = _parse_count_modifier(all_names)
-        if count < 1:
+        if count is None:
             count = 1
     else:
         all_names, _ = _parse_count_modifier(all_names)
@@ -751,9 +770,11 @@ def remove_shorthand(
     from_file: Optional[str] = typer.Option(None, "--from-file", help="Text file with one card name per line"),
     stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
     maybeboard: bool = typer.Option(False, "--maybeboard", help="Remove from maybeboard instead of mainboard"),
-    count: Optional[int] = typer.Option(None, "--count", help="Remove only this many copies (default: all copies)"),
+    count: Optional[int] = typer.Option(None, "--count", help="Remove only this many copies (default: 1 copy)"),
+    all_copies: bool = typer.Option(False, "--all", help="Remove all copies of each named card"),
 ):
-    """Shorthand for remove-card using the current cube. Supports inline x N / *N count modifier."""
+    """Shorthand for remove-card using the current cube. Supports inline x N / *N count modifier.
+    By default removes 1 copy of each card. Use --all to remove all copies."""
     id_or_slug = resolve_cube_id(None)
     all_names: List[str] = list(names or [])
 
@@ -772,21 +793,32 @@ def remove_shorthand(
         typer.echo("No card names provided. Use positional args, --from-file, or --stdin.", err=True)
         raise typer.Exit(1)
 
-    if count is None:
+    if count is None and not all_copies:
         all_names, inline_count = _parse_count_modifier(all_names)
-        count = inline_count if inline_count > 1 else None
+        count = inline_count if inline_count is not None else 1
+    elif all_copies:
+        all_names, _ = _parse_count_modifier(all_names)
     else:
         all_names, _ = _parse_count_modifier(all_names)
 
+    actual_count = None if all_copies else count
+
     board = "maybeboard" if maybeboard else "mainboard"
     try:
-        result = remove_cards(id_or_slug, all_names, board=board, count=count)
+        result = remove_cards(id_or_slug, all_names, board=board, count=actual_count)
     except FileNotFoundError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
     if result["removed"]:
-        label = f"(each: {count} cop{'y' if count == 1 else 'ies'})" if count else "(all copies)"
+        if all_copies:
+            label = "(all copies)"
+        elif count == 1:
+            label = "(1 copy each)"
+        elif count is not None:
+            label = f"({count} cop{'y' if count == 1 else 'ies'} each)"
+        else:
+            label = "(1 copy each)"
         typer.echo(f"Removed from {board} {label} ({len(result['removed'])}):")
         for name in result["removed"]:
             n = result["removed_counts"].get(name.strip().lower(), 1)
@@ -950,11 +982,13 @@ def search_card(
 
 # ── ops REPL ───────────────────────────────────────────────────────────────────
 
-def _ops_tokenize(line: str) -> Tuple[str, List[str], int]:
-    """Parse a REPL input line. Returns (operator, card_names, modifier).
+def _ops_tokenize(line: str) -> Tuple[str, List[Dict[str, Any]], int]:
+    """Parse a REPL input line. Position-free tokenizer.
 
-    operator: one of +, -, *, /, list, undo, reset, done, quit
-    modifier: count for +/-, factor for *//, undo index for undo, else 0
+    Returns (operator, card_data, modifier)
+    - operator: one of +, -, =, *, /, list, undo, reset, done, quit
+    - card_data: list of dicts with 'name' key and optional 'count'/'target'
+    - modifier: factor for *//, undo index, 0 otherwise
     """
     try:
         tokens = shlex.split(line.strip())
@@ -964,77 +998,120 @@ def _ops_tokenize(line: str) -> Tuple[str, List[str], int]:
     if not tokens:
         return ("empty", [], 0)
 
+    # Check for control commands (must be first token)
     raw_op = tokens[0]
     op = raw_op.lower()
-    rest = tokens[1:]
-
-    # Normalize aliases
     alias_map = {"ls": "list", "apply": "done", "exit": "quit"}
     op = alias_map.get(op, op)
 
     if op in ("quit", "list", "reset"):
         return (op, [], 0)
-
     if op == "done":
         return ("done", [], 0)
-
     if op == "undo":
-        idx = int(rest[0]) if rest and rest[0].isdigit() else 0
+        idx = int(tokens[1]) if len(tokens) > 1 and tokens[1].isdigit() else 0
         return ("undo", [], idx)
 
-    # Scale operators: first rest token is the factor
-    if raw_op in ("*", "/"):
-        if not rest or not rest[0].isdigit():
-            return ("error", [], 0)
-        factor = int(rest[0])
-        names = rest[1:]
-        names, _ = _parse_count_modifier(names)
-        return (raw_op, names, factor)
+    action_ops = {"+", "-", "="}
+    scale_ops = {"*", "/"}
 
-    if raw_op in ("+", "-"):
-        names, count = _parse_count_modifier(rest)
-        return (raw_op, names, count)
+    action_indices = [i for i, t in enumerate(tokens) if t in action_ops]
+    scale_indices = [i for i, t in enumerate(tokens) if t in scale_ops]
+
+    if action_indices:
+        primary_op = tokens[action_indices[0]]
+        # Collect all non-action-op tokens as card expressions
+        card_tokens = [t for t in tokens if t not in action_ops]
+
+        if primary_op == "=":
+            # = "Bolt" 4  or  "Bolt" = 4
+            # Target count is bare number (not * N format)
+            # Each token is a separate card name; digit tokens are targets
+            card_data = []
+            i = 0
+            while i < len(card_tokens):
+                name = card_tokens[i]
+                i += 1
+                target = 1
+                if i < len(card_tokens) and card_tokens[i].isdigit():
+                    target = int(card_tokens[i])
+                    i += 1
+                card_data.append({"name": name, "target": target})
+            return (primary_op, card_data, 0)
+        else:
+            # + or -: count is * N format
+            # Each token is a separate card name
+            card_data = []
+            i = 0
+            while i < len(card_tokens):
+                name = card_tokens[i]
+                i += 1
+                count = 1
+                if i < len(card_tokens) and card_tokens[i] == "*" and i + 1 < len(card_tokens) and card_tokens[i + 1].isdigit():
+                    count = int(card_tokens[i + 1])
+                    i += 2
+                elif i < len(card_tokens) and re.match(r"^[*][0-9]+$", card_tokens[i]):
+                    count = int(card_tokens[i][1:])
+                    i += 1
+                card_data.append({"name": name, "count": count})
+            return (primary_op, card_data, 0)
+
+    elif scale_indices:
+        # Scale operator: find factor (first digit token)
+        factor = None
+        factor_idx = None
+        for i, t in enumerate(tokens):
+            if t.isdigit():
+                factor = int(t)
+                factor_idx = i
+                break
+        if factor is None:
+            return ("error", [], 0)
+        names = []
+        for i, t in enumerate(tokens):
+            if t in scale_ops:
+                continue
+            if i == factor_idx:
+                continue
+            names.append(t)
+        return (tokens[scale_indices[0]], [{"name": n} for n in names if n], factor or 0)
 
     return ("unknown", [], 0)
 
 
-def _ops_validate_add(names: List[str], _id_or_slug: str) -> Tuple[List[str], List[str]]:
-    """Scryfall-verify add candidates. Returns (valid_canonical, invalid)."""
-    valid: List[str] = []
+def _ops_validate_add(card_data: List[Dict[str, Any]], _id_or_slug: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Scryfall-verify add candidates. Returns (valid_data, invalid_names)."""
+    valid: List[Dict[str, Any]] = []
     invalid: List[str] = []
-    for name in names:
+    for item in card_data:
+        name = item["name"]
         try:
             card = scryfall.fuzzy_lookup(name)
         except scryfall.ScryfallNetworkError:
-            valid.append(name)
+            valid.append(item)
             continue
         if card is None:
             invalid.append(name)
         else:
-            valid.append(card["name"])
+            valid.append({"name": card["name"], "count": item.get("count", 1)})
     return valid, invalid
 
 
-def _ops_validate_remove(names: List[str], id_or_slug: str) -> Tuple[List[str], List[str]]:
-    """Check names against mainboard.csv. Returns (found, not_found)."""
-    try:
-        cube_folder = find_cube_dir(id_or_slug)
-    except FileNotFoundError:
-        return [], names[:]
-    csv_path = os.path.join(cube_folder, "mainboard.csv")
-    in_cube: set = set()
-    if os.path.exists(csv_path):
-        with open(csv_path, encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                n = row.get("name", "").strip()
-                if n:
-                    in_cube.add(n.lower())
-    found = [n for n in names if n.strip().lower() in in_cube]
-    not_found = [n for n in names if n.strip().lower() not in in_cube]
+def _ops_validate_remove(card_data: List[Dict[str, Any]], net_counts: Dict[str, int]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Check names against net_counts. Returns (found_data, not_found_names)."""
+    found: List[Dict[str, Any]] = []
+    not_found: List[str] = []
+    for item in card_data:
+        name = item["name"]
+        key = name.strip().lower()
+        if net_counts.get(key, 0) > 0:
+            found.append(item)
+        else:
+            not_found.append(name)
     return found, not_found
 
 
-def _ops_cube_counts(id_or_slug: str) -> Dict[str, int]:
+def _ops_net_counts(id_or_slug: str) -> Dict[str, int]:
     """Return {name_lower: copy_count} from mainboard.csv."""
     try:
         cube_folder = find_cube_dir(id_or_slug)
@@ -1071,17 +1148,21 @@ def ops(
 ):
     """Interactive REPL for staging and applying batch cube edits.
 
-    Operators: + (add), - (remove), * N (scale up), / N (scale down)
+    Operators: + (add), - (remove), = (set count), * N (scale up), / N (scale down)
     Control: list, undo [N], reset, done, quit
     Card names with spaces must be quoted: + "Serra Angel"
+    Per-card quantities: + "Bolt" * 3 "Serra Angel" * 2
+    Set target count: = "Bolt" 4  or  "Bolt" = 4
     """
     import math as _math
 
     id_or_slug = resolve_cube_id(id_or_slug)
     staging: List[Dict] = []
+    net_counts: Dict[str, int] = _ops_net_counts(id_or_slug)
 
-    typer.echo(f"ops ({id_or_slug})> type + - * / list undo reset done quit")
+    typer.echo(f"ops ({id_or_slug})> type + - = * / list undo reset done quit")
     typer.echo("  Card names with spaces must be quoted: + \"Serra Angel\"")
+    typer.echo("  Per-card quantities: + \"Bolt\" * 3   Set count: = \"Bolt\" 4")
 
     while True:
         try:
@@ -1097,7 +1178,7 @@ def ops(
         if not line:
             continue
 
-        op, names, modifier = _ops_tokenize(line)
+        op, card_data, modifier = _ops_tokenize(line)
 
         if op == "quit":
             discarded = len(staging)
@@ -1115,6 +1196,7 @@ def ops(
 
         if op == "reset":
             staging.clear()
+            net_counts = _ops_net_counts(id_or_slug)
             typer.echo("All staged operations cleared.")
             continue
 
@@ -1127,6 +1209,28 @@ def ops(
                 typer.echo(f"Index {idx} out of range (1–{len(staging)}).")
                 continue
             removed = staging.pop(idx - 1)
+            # Reverse net_counts update
+            eop = removed["op"]
+            for item in removed.get("items", []):
+                name = item["name"]
+                key = name.lower()
+                if eop == "+":
+                    net_counts[key] = max(0, net_counts.get(key, 0) - item.get("count", 1))
+                elif eop == "-":
+                    net_counts[key] = net_counts.get(key, 0) + item.get("count", 1)
+                elif eop == "=":
+                    # Restore original by reversing delta
+                    delta = removed.get("delta", 0)
+                    net_counts[key] = max(0, net_counts.get(key, 0) - delta)
+                elif eop in ("*", "/"):
+                    factor = removed.get("factor", 1)
+                    current = net_counts.get(key, 0)
+                    if eop == "*":
+                        # Reverse multiply: divide by factor
+                        net_counts[key] = _math.floor(current / factor)
+                    else:
+                        # Reverse divide: multiply by factor
+                        net_counts[key] = current * factor
             typer.echo(f"Removed [{idx}]: {removed['display_lines'][0]}")
             continue
 
@@ -1146,20 +1250,31 @@ def ops(
             applied = 0
             for entry in staging:
                 eop = entry["op"]
-                enames = entry["names"]
-                ecount = entry.get("count")
+                items = entry.get("items", [])
                 efactor = entry.get("factor")
                 try:
                     if eop == "+":
-                        add_count = ecount or 1
-                        all_add = [n for n in enames for _ in range(add_count)]
-                        add_cards(id_or_slug, all_add, board="mainboard", verify=False)
+                        for item in items:
+                            add_count = item.get("count", 1)
+                            all_add = [item["name"]] * add_count
+                            add_cards(id_or_slug, all_add, board="mainboard", verify=False)
                     elif eop == "-":
-                        remove_cards(id_or_slug, enames, board="mainboard", count=ecount)
+                        for item in items:
+                            remove_cards(id_or_slug, [item["name"]], board="mainboard", count=item.get("count", 1))
+                    elif eop == "=":
+                        delta = entry.get("delta", 0)
+                        if delta > 0:
+                            for item in items:
+                                add_cards(id_or_slug, [item["name"]] * delta, board="mainboard", verify=False)
+                        elif delta < 0:
+                            for item in items:
+                                remove_cards(id_or_slug, [item["name"]], board="mainboard", count=abs(delta))
                     elif eop == "*":
-                        scale_cards(id_or_slug, enames, efactor, "multiply", board="mainboard")
+                        for item in items:
+                            scale_cards(id_or_slug, [item["name"]], efactor, "multiply", board="mainboard")
                     elif eop == "/":
-                        scale_cards(id_or_slug, enames, efactor, "divide", board="mainboard")
+                        for item in items:
+                            scale_cards(id_or_slug, [item["name"]], efactor, "divide", board="mainboard")
                     applied += 1
                 except Exception as exc:
                     typer.echo(f"  Error applying {entry['display_lines'][0]}: {exc}", err=True)
@@ -1168,84 +1283,138 @@ def ops(
             break
 
         if op == "error" or op == "unknown":
-            typer.echo("  Unknown command. Use + - * / list undo reset done quit.")
+            typer.echo("  Unknown command. Use + - = * / list undo reset done quit.")
             continue
 
         if op == "empty":
             continue
 
         # Staging logic
-        counts = _ops_cube_counts(id_or_slug)
-
         if op == "+":
-            if not names:
+            if not card_data:
                 typer.echo("  Provide card name(s) after +.")
                 continue
-            valid, invalid = _ops_validate_add(names, id_or_slug)
+            valid, invalid = _ops_validate_add(card_data, id_or_slug)
             for bad in invalid:
                 typer.echo(f'  ✗ "{bad}" — not found on Scryfall. Skipped.')
             if not valid:
                 continue
-            count = modifier if modifier > 1 else 1
-            delta = len(valid) * count
-            display_lines = [f"add {n} ×{count}" for n in valid]
-            staging.append({"op": "+", "names": valid, "count": count, "factor": None,
+            delta = 0
+            display_lines = []
+            for item in valid:
+                count = item.get("count", 1)
+                delta += count
+                display_lines.append(f"add {item['name']} ×{count}")
+                net_counts[item['name'].lower()] = net_counts.get(item['name'].lower(), 0) + count
+            staging.append({"op": "+", "items": valid, "factor": None,
                             "delta": delta, "display_lines": display_lines})
             for dl in display_lines:
                 typer.echo(f"  ✓ Staged: {dl}")
 
         elif op == "-":
-            if not names:
+            if not card_data:
                 typer.echo("  Provide card name(s) after -.")
                 continue
-            found, not_found = _ops_validate_remove(names, id_or_slug)
+            found, not_found = _ops_validate_remove(card_data, net_counts)
             for bad in not_found:
                 typer.echo(f'  ✗ "{bad}" — not in cube. Skipped.')
             if not found:
                 continue
-            count = modifier if modifier > 1 else None
             delta = 0
             display_lines = []
-            for n in found:
-                if count:
-                    display_lines.append(f"remove {n} ×{count}")
-                    delta -= count
+            for item in found:
+                count = item.get("count", 1)
+                key = item['name'].lower()
+                available = net_counts.get(key, 0)
+                if available <= 0:
+                    continue
+                actual_count = min(count, available)
+                display_lines.append(f"remove {item['name']} ×{actual_count}")
+                delta -= actual_count
+                net_counts[key] = available - actual_count
+                item["count"] = actual_count
+            if not display_lines:
+                typer.echo("  No copies available to remove.")
+                continue
+            staging.append({"op": "-", "items": found, "factor": None,
+                            "delta": delta, "display_lines": display_lines})
+            for dl in display_lines:
+                typer.echo(f"  ✓ Staged: {dl}")
+
+        elif op == "=":
+            if not card_data:
+                typer.echo("  Provide card name(s) and target count after =.")
+                continue
+            valid, invalid = _ops_validate_add(card_data, id_or_slug)
+            for bad in invalid:
+                typer.echo(f'  ✗ "{bad}" — not found on Scryfall. Skipped.')
+            # For =, we don't need Scryfall validation if the card is already in cube
+            # But if it's a new card, we should verify. For now, use same validation.
+            found = []
+            not_found = []
+            for item in valid:
+                key = item['name'].lower()
+                if net_counts.get(key, 0) > 0 or item['name'] in [i['name'] for i in valid]:
+                    found.append(item)
                 else:
-                    current = counts.get(n.lower(), 1)
-                    display_lines.append(f"remove {n} (all copies)")
-                    delta -= current
-            staging.append({"op": "-", "names": found, "count": count, "factor": None,
+                    not_found.append(item['name'])
+            # Actually, = should work on cards in the cube. If not in cube, treat as add.
+            found = valid
+            if not found:
+                continue
+            delta = 0
+            display_lines = []
+            for item in found:
+                name = item['name']
+                key = name.lower()
+                target = item.get("target", 1)
+                current = net_counts.get(key, 0)
+                item_delta = target - current
+                item["delta"] = item_delta
+                delta += item_delta
+                if item_delta > 0:
+                    display_lines.append(f"set {name} to {target} (current {current} → +{item_delta})")
+                elif item_delta < 0:
+                    display_lines.append(f"set {name} to {target} (current {current} → {item_delta})")
+                else:
+                    display_lines.append(f"set {name} to {target} (no change)")
+                net_counts[key] = target
+            staging.append({"op": "=", "items": found, "factor": None,
                             "delta": delta, "display_lines": display_lines})
             for dl in display_lines:
                 typer.echo(f"  ✓ Staged: {dl}")
 
         elif op in ("*", "/"):
             factor = modifier
-            if factor < 2:
-                typer.echo("  Factor must be at least 2.")
+            if factor < 0:
+                typer.echo("  Factor must be non-negative.")
                 continue
-            if not names:
+            if not card_data:
                 typer.echo(f"  Provide card name(s) after {op} {factor}.")
                 continue
-            found, not_found = _ops_validate_remove(names, id_or_slug)
+            names_only = [item["name"] for item in card_data]
+            found, not_found = _ops_validate_remove(card_data, net_counts)
             for bad in not_found:
                 typer.echo(f'  ✗ "{bad}" — not in cube. Skipped.')
             if not found:
                 continue
             display_lines = []
             delta = 0
-            for n in found:
-                current = counts.get(n.lower(), 0)
+            for item in found:
+                name = item["name"]
+                key = name.lower()
+                current = net_counts.get(key, 0)
                 if op == "*":
                     new_count = current * factor
                 else:
-                    new_count = _math.floor(current / factor)
-                    if new_count == 0:
-                        typer.echo(f"  ⚠ {n}: {current} → 0 copies (will remove from cube)")
+                    new_count = _math.floor(current / factor) if factor > 0 else 0
+                    if new_count == 0 and current > 0:
+                        typer.echo(f"  ⚠ {name}: {current} → 0 copies (will remove from cube)")
                 d = new_count - current
                 delta += d
-                display_lines.append(f"scale {n} ×{factor} ({current} → {new_count})")
-            staging.append({"op": op, "names": found, "count": None, "factor": factor,
+                display_lines.append(f"scale {name} ×{factor} ({current} → {new_count})")
+                net_counts[key] = new_count
+            staging.append({"op": op, "items": found, "factor": factor,
                             "delta": delta, "display_lines": display_lines})
             for dl in display_lines:
                 typer.echo(f"  ✓ Staged: {dl}")

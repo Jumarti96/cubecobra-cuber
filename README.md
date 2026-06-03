@@ -7,12 +7,12 @@ A local Python toolkit for managing your Magic: The Gathering cubes on [CubeCobr
 - **Set a current cube** with `cuber use <id>` — all commands then work without typing the cube ID every time; `.cuber-config.json` stores it locally (gitignored)
 - **Fetch** any public CubeCobra cube into a local project folder — full JSON snapshot, primer, card list, and metadata all separated into editable files
 - **Add cards** quickly with `cuber + "Card Name"` (shorthand for `add-card`); `x N` / `*N` inline count modifier adds multiple copies in one shot
-- **Remove cards** quickly with `cuber rm "Card Name"` (shorthand for `remove-card`); same inline count modifier support
+- **Remove cards** quickly with `cuber rm "Card Name"` (shorthand for `remove-card`); removes 1 copy by default, `--all` for all copies; same inline count modifier support
 - **Scale copy counts** with `cuber x N [cards...]` (multiply) and `cuber div N [cards...]` (floor-divide) — useful for constructed cubes with intentional multiples
 - **Search by name** with `cuber search-card "Serra"` — fuzzy substring match within the cube; falls back to Scryfall with `--scryfall` or on no results; standard filter flags apply
-- **Batch edit interactively** with `cuber ops` — a REPL where `+`, `-`, `*`, `/` stage operations that you review and confirm before applying; `undo`, `reset`, `list`, and `done` control the session
+- **Batch edit interactively** with `cuber ops` — a REPL where `+`, `-`, `=`, `*`, `/` stage operations that you review and confirm before applying; `undo`, `reset`, `list`, and `done` control the session
 - **Add cards** to your cube (single card, batch list, or from a file) with automatic Scryfall enrichment on the next `enrich` run; supports multiple copies
-- **Remove cards** from your cube by name — removes all copies by default, or exactly N copies with `--count`
+- **Remove cards** from your cube by name — removes 1 copy by default, or all copies with `--all`
 - **Clean up duplicates** with `dedup` — collapses repeated rows in one command
 - **Track changes** locally: see what you've added, removed, or retagged since the last CubeCobra fetch
 - **Enrich** cards with Scryfall metadata: oracle text, color identity, CMC, power/toughness, rarity
@@ -171,13 +171,14 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 | `add-card <id> <names...> --maybeboard` | Send added cards to the maybeboard instead. | `cuber add-card obc "Teferi" --maybeboard` |
 | `swap <id> <old> <new>` | Atomically replace one card with another. Verifies the new card on Scryfall before removing the old one — aborts without changes if the new card is not found or the old card isn't in the cube. | `cuber swap obc "Dark Ritual" "Cabal Ritual"` |
 | `swap <id> <old> <new> --maybeboard` | Operate on the maybeboard instead. | `cuber swap obc "Card A" "Card B" --maybeboard` |
-| `remove-card <id> <names...>` | Remove cards from the mainboard. Removes all copies of each named card by default. | `cuber remove-card obc "Lightning Bolt"` |
-| `remove-card <id> <names...> --count N` | Remove only N copies (for constructed cubes with intentional multiples). | `cuber remove-card obc "Lightning Bolt" --count 2` |
+| `remove-card <id> <names...>` | Remove cards from the mainboard. Removes **1 copy** of each named card by default. | `cuber remove-card obc "Lightning Bolt"` |
+| `remove-card <id> <names...> --count N` | Remove exactly N copies. | `cuber remove-card obc "Lightning Bolt" --count 2` |
+| `remove-card <id> <names...> --all` | Remove **all copies** of each named card. | `cuber remove-card obc "Lightning Bolt" --all` |
 | `remove-card <id> --from-file <path>` | Remove cards listed in a file (one name per line). | `cuber remove-card obc --from-file cuts.txt` |
 | `remove-card <id> <names...> --maybeboard` | Remove from maybeboard instead. | `cuber remove-card obc "Teferi" --maybeboard` |
 | `+ <names...>` | Shorthand for `add-card` using the current cube. Supports inline count modifier: `cuber + "Serra Angel" x 3` adds 3 copies. | `cuber + "Lightning Bolt"` |
 | `+ <names...> --count N` | Add N copies of each named card. | `cuber + "Serra Angel" --count 2` |
-| `rm <names...>` | Shorthand for `remove-card` using the current cube. Inline `x N` / `*N` modifier for count. | `cuber rm "Dark Ritual"` |
+| `rm <names...>` | Shorthand for `remove-card` using the current cube. Removes 1 copy by default. Inline `x N` / `*N` modifier for count. `rm "Card" --all` removes all copies. | `cuber rm "Dark Ritual"` |
 | `x <N> [cards...]` | Multiply existing copy counts by N. Reports before/after for each card. | `cuber x 2 "Lightning Bolt"` |
 | `div <N> [cards...]` | Floor-divide existing copy counts by N. Prompts before removing the last copy of any card. | `cuber div 2 "Serra Angel"` |
 | `search-card <query>` | Fuzzy name search within the cube (case-insensitive substring). Shows Name, CMC, CI, Type, Rarity, Scryfall URL. Falls back to Scryfall when not found. | `cuber search-card "Serra"` |
@@ -186,7 +187,7 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 | `search-card <query> --type <str>` | Filter by type line substring. | `cuber search-card "Serra" --type creature` |
 | `search-card <query> --rarity <r>` | Filter by exact rarity: common/uncommon/rare/mythic. | `cuber search-card "Serra" --rarity rare` |
 | `search-card <query> --cmc-min N --cmc-max N` | Filter by CMC range. | `cuber search-card "Angel" --cmc-max 4` |
-| `ops` | Interactive batch editing REPL. Stage operations with `+`, `-`, `* N`, `/ N`; review with `list`; undo with `undo [N]`; apply with `done`; exit without applying with `quit`. | `cuber ops` |
+| `ops` | Interactive batch editing REPL. Position-free grammar: `+ "Bolt" * 3 "Serra Angel" * 2`, `- "Bolt"`, `= "Bolt" 4`. Stage operations with `+`, `-`, `=`, `* N`, `/ N`; review with `list`; undo with `undo [N]`; apply with `done`; exit without applying with `quit`. | `cuber ops` |
 | `dedup [id]` | Remove duplicate rows, keeping one copy of each card name. | `cuber dedup obc` |
 | `status [id]` | Show cards added, removed, or retagged since last fetch. | `cuber status obc` |
 | `export [id]` | Assemble `exports/import-ready.csv` from `mainboard.csv`. Validates all card names against Scryfall (using `enriched.json` as a cache for already-verified cards). Blocks export if any card names are not found. | `cuber export obc` |
