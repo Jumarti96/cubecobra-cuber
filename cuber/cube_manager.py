@@ -372,12 +372,12 @@ def remove_cards(
     id_or_slug: str,
     names: List[str],
     board: str = "mainboard",
-    count: Optional[int] = None,
+    count: Optional[int] = 1,
 ) -> Dict[str, Any]:
     """Remove cards from mainboard.csv or maybeboard.csv.
 
-    By default removes ALL copies of each named card. Pass count to remove
-    only that many copies (useful for constructed cubes with intentional multiples).
+    By default removes ONE copy of each named card. Pass count to remove
+    a specific number. Pass count=None to remove all copies.
     """
     cube_folder = find_cube_dir(id_or_slug)
     csv_filename = "mainboard.csv" if board == "mainboard" else "maybeboard.csv"
@@ -1038,6 +1038,8 @@ def scale_cards(
             delta = new_count - current
             if delta > 0:
                 add_cards(id_or_slug, [card_name] * delta, board=board, verify=False)
+            elif delta < 0:
+                remove_cards(id_or_slug, [card_name], board=board, count=abs(delta))
         else:
             new_count = math.floor(current / factor)
             delta = current - new_count
