@@ -338,6 +338,11 @@ def add_cards(
             existing_rows = list(reader)
 
     stub_base = {col: "" for col in fieldnames}
+    # Every row written here lands in the board's CSV file, so stamp the board
+    # markers — otherwise the card is enriched/exported with a blank board and
+    # is treated as neither mainboard nor maybeboard downstream.
+    stub_base["board"] = board
+    stub_base["maybeboard"] = "true" if board == "maybeboard" else "false"
     added: List[str] = []
     corrections: List[Dict[str, str]] = []
     not_found: List[str] = []
