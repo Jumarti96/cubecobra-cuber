@@ -28,7 +28,7 @@ from .cube_manager import (
     resolve_cube_id,
     scale_cards,
 )
-from .cube_search import load_merged_pool, search_pool, format_search_results, fuzzy_name_search, format_search_card_results
+from .cube_search import load_merged_pool, load_csv_pool, search_pool, format_search_results, fuzzy_name_search, format_search_card_results
 
 app = typer.Typer(
     name="cuber",
@@ -623,21 +623,34 @@ def search(
     id_or_slug = resolve_cube_id(id_or_slug)
     try:
         pool = load_merged_pool(id_or_slug)
-    except FileNotFoundError:
-        typer.echo(f"enriched.json not found — run cuber enrich {id_or_slug} first", err=True)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
     color_identity = [c.strip().upper() for c in color.split(",")] if color else None
     tags = [t.strip() for t in tag.split(",")] if tag else None
 
+    # Warn when enriched-only filters are used but some cards lack enrichment
+    any_unenriched = any(
+        not c.get("oracle_text") and not c.get("scryfall_id")
+        for c in pool
+    )
+    effective_oracle = oracle
+    effective_tags = tags
+    if any_unenriched:
+        if oracle:
+            typer.echo("  (Note: --oracle filter may miss unenriched cards)")
+        if tags:
+            typer.echo("  (Note: --tag filter may miss unenriched cards)")
+
     results = search_pool(
         pool,
         color_identity=color_identity,
-        oracle_pattern=oracle,
+        oracle_pattern=effective_oracle,
         card_type=card_type,
         cmc_min=cmc_min,
         cmc_max=cmc_max,
-        tags=tags,
+        tags=effective_tags,
         rarity=rarity,
     )
     typer.echo(format_search_results(results, limit=limit))
@@ -956,8 +969,8 @@ def search_card(
 
     try:
         pool = load_merged_pool(id_or_slug)
-    except FileNotFoundError:
-        typer.echo(f"enriched.json not found — run cuber enrich {id_or_slug} first", err=True)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
     results = fuzzy_name_search(pool, query)

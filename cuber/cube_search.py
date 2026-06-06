@@ -17,20 +17,40 @@ def load_merged_pool(
     id_or_slug: str,
     card_pool_rules: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Load enriched.json cards and merge functional tags from tagged.csv.
+    """Load enriched.json cards, merge with mainboard.csv stubs, and merge tags from tagged.csv.
+
+    Cards present in both enriched.json and mainboard.csv use enriched data (full Scryfall).
+    Cards only in mainboard.csv (unenriched stubs) are included with CSV-derived fields.
+    Cards only in enriched.json but removed from mainboard.csv are excluded.
 
     tagged.csv tags are merged onto each card's existing tags list (no duplicates).
-    Returns a list of card dicts ready for search_pool().
 
     card_pool_rules (optional) restricts and/or multiplies the pool:
       - excluded: list of card names to remove regardless of rarity
       - only_from: {rarity: [allowed names]} — all other cards of that rarity excluded
       - multipliers: {rarity: N} — each card of that rarity appears N times in the pool
     """
-    cube = load_enriched(id_or_slug)
     cube_folder = find_cube_dir(id_or_slug)
-    tagged_csv = os.path.join(cube_folder, "tagged.csv")
 
+    # Always build the CSV pool first — this is the ground truth of what's in the cube
+    csv_pool = load_csv_pool(id_or_slug)
+    csv_by_name: Dict[str, Dict[str, Any]] = {}
+    for c in csv_pool:
+        csv_by_name[c["name"].strip().lower()] = c
+
+    # Try to load enriched data
+    enriched_by_name: Dict[str, Dict[str, Any]] = {}
+    try:
+        cube = load_enriched(id_or_slug)
+        for card in cube.cards:
+            if (card.board or "mainboard") != "mainboard":
+                continue
+            enriched_by_name[card.name.strip().lower()] = card.to_dict()
+    except FileNotFoundError:
+        pass
+
+    # Load tagged.csv tags
+    tagged_csv = os.path.join(cube_folder, "tagged.csv")
     tags_by_name: Dict[str, List[str]] = {}
     if os.path.exists(tagged_csv):
         with open(tagged_csv, encoding="utf-8") as f:
@@ -43,13 +63,24 @@ def load_merged_pool(
                 csv_tags = [t.strip() for t in raw.split(";") if t.strip()]
                 tags_by_name[name] = csv_tags
 
+    # Merge: CSV is the master list; enriched data overrides when available
     pool = []
-    for card in cube.cards:
-        if (card.board or "mainboard") != "mainboard":
+    seen: set = set()
+    for csv_card in csv_pool:
+        name = csv_card["name"].strip()
+        key = name.lower()
+        if key in seen:
             continue
-        d = card.to_dict()
-        merged = list(card.tags)
-        for tag in tags_by_name.get(card.name, []):
+        seen.add(key)
+
+        if key in enriched_by_name:
+            d = dict(enriched_by_name[key])
+        else:
+            d = dict(csv_card)
+
+        # Merge tags from tagged.csv
+        merged = list(d.get("tags") or [])
+        for tag in tags_by_name.get(name, []):
             if tag not in merged:
                 merged.append(tag)
         d["tags"] = merged
@@ -58,6 +89,49 @@ def load_merged_pool(
     if card_pool_rules:
         pool = _apply_card_pool_rules(pool, card_pool_rules)
 
+    return pool
+
+
+def load_csv_pool(id_or_slug: str) -> List[Dict[str, Any]]:
+    """Load mainboard.csv as a pool of card dicts for searching.
+
+    Provides a fallback when enriched.json is missing. Fields that require
+    Scryfall data (oracle_text, full color_identity) will be empty or best-effort.
+    """
+    cube_folder = find_cube_dir(id_or_slug)
+    csv_path = os.path.join(cube_folder, "mainboard.csv")
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"mainboard.csv not found for cube '{id_or_slug}'")
+
+    pool = []
+    with open(csv_path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row.get("name", "").strip()
+            if not name:
+                continue
+            color_str = row.get("Color", "")
+            color_letters = [c for c in color_str if c in "WUBRG"]
+            try:
+                cmc = float(row.get("CMC") or 0)
+            except (ValueError, TypeError):
+                cmc = 0.0
+            raw_tags = row.get("tags") or ""
+            tags = [t.strip() for t in raw_tags.split(";") if t.strip()]
+            pool.append({
+                "name": name,
+                "color_identity": color_letters,
+                "cmc": cmc,
+                "type_line": row.get("Type", ""),
+                "rarity": (row.get("Rarity") or "").lower(),
+                "tags": tags,
+                "board": row.get("board", "mainboard") or "mainboard",
+                "oracle_text": "",
+                "color_category": row.get("Color Category", ""),
+                "status": row.get("status", ""),
+                "finish": row.get("Finish", "Non-Foil"),
+                "image_url": row.get("image URL", ""),
+            })
     return pool
 
 
