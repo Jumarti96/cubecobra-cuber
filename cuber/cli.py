@@ -58,6 +58,15 @@ def use(
         typer.echo("Provide a cube ID or use --clear.", err=True)
         raise typer.Exit(1)
 
+    try:
+        find_cube_dir(cube_id)
+    except FileNotFoundError:
+        typer.echo(
+            f"Cube '{cube_id}' not found locally. Run `cuber fetch {cube_id}` or check `cuber list`.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({"current": cube_id}, f)
     typer.echo(f"Current cube set to: {cube_id}")
@@ -133,7 +142,7 @@ def stats(
     enriched_cards = None
     try:
         enriched_cube = load_enriched(id_or_slug)
-        enriched_cards = [c for c in enriched_cube.cards if c.board == "mainboard"]
+        enriched_cards = [c for c in enriched_cube.cards if (c.board or "mainboard") == "mainboard"]
         cmc_values = [float(c.cmc) for c in enriched_cards]
     except FileNotFoundError:
         pass

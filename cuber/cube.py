@@ -30,7 +30,7 @@ def find_cube_dir(id_or_slug: str) -> str:
     if os.path.isdir(direct) and os.path.exists(os.path.join(direct, "meta.json")):
         return direct
 
-    # 2. Fall back to scanning meta.json files for a matching short_id
+    # 2. Fall back to scanning meta.json files for a matching id/short_id/slug
     if os.path.isdir(CUBES_DIR):
         for entry in os.scandir(CUBES_DIR):
             if not entry.is_dir():
@@ -41,7 +41,7 @@ def find_cube_dir(id_or_slug: str) -> str:
             try:
                 with open(meta_path, encoding="utf-8") as f:
                     meta = json.load(f)
-                if (meta.get("id") or meta.get("short_id")) == id_or_slug:
+                if id_or_slug in (meta.get("id"), meta.get("short_id"), meta.get("slug")):
                     return entry.path
             except (json.JSONDecodeError, OSError):
                 continue

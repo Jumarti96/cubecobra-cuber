@@ -63,7 +63,7 @@ def _numeric_summary(values: List[float]) -> str:
 # ── Compute ───────────────────────────────────────────────────────────────────
 
 def compute_stats(cube: Cube) -> Dict[str, Any]:
-    cards = [c for c in cube.cards if c.board == "mainboard"]
+    cards = [c for c in cube.cards if (c.board or "mainboard") == "mainboard"]
     return {
         "cube_id": cube.cube_id or cube.short_id,
         "cube_title": cube.title,
@@ -77,7 +77,7 @@ def compute_stats(cube: Cube) -> Dict[str, Any]:
 
 
 def compute_tag_density(cube: Cube) -> Dict[str, Any]:
-    cards = [c for c in cube.cards if c.board == "mainboard"]
+    cards = [c for c in cube.cards if (c.board or "mainboard") == "mainboard"]
     tag_counts: Counter = Counter()
     for card in cards:
         for tag in card.tags:
@@ -102,7 +102,7 @@ def compute_archetype_clusters(cube: Cube) -> Dict[str, Any]:
       - Supported: 5% to < 10%
       - Strong:    ≥ 10%
     """
-    cards = [c for c in cube.cards if c.board == "mainboard"]
+    cards = [c for c in cube.cards if (c.board or "mainboard") == "mainboard"]
     total = len(cards) or 1
 
     archetype_counts: Dict[str, Dict[str, Any]] = {}

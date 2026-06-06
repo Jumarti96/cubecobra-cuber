@@ -59,7 +59,7 @@ def find_commanders(
     cube = load_enriched(id_or_slug)
     results = []
     for card in cube.cards:
-        if card.board != "mainboard":
+        if (card.board or "mainboard") != "mainboard":
             continue
         eligibility = is_commander_eligible(card)
         if not eligibility["eligible"]:

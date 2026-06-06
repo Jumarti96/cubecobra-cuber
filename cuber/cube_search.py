@@ -45,7 +45,7 @@ def load_merged_pool(
 
     pool = []
     for card in cube.cards:
-        if card.board != "mainboard":
+        if (card.board or "mainboard") != "mainboard":
             continue
         d = card.to_dict()
         merged = list(card.tags)
@@ -256,7 +256,7 @@ def search_pool(
     """
     results = []
     for card in pool:
-        if card.get("board", "mainboard") != board:
+        if (card.get("board") or "mainboard") != board:
             continue
         if color_identity is not None:
             ci = set(card.get("color_identity") or [])

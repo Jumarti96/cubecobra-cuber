@@ -264,7 +264,7 @@ def _parse_response(response: str, batch: List[Card]) -> Dict[str, Dict]:
 
 def tag_cards(cube: Cube, overwrite: bool = False) -> Cube:
     """Tag all mainboard cards in cube via LLM, writing taxonomic_profile to each card."""
-    mainboard = [c for c in cube.cards if c.board == "mainboard"]
+    mainboard = [c for c in cube.cards if (c.board or "mainboard") == "mainboard"]
     batches = [mainboard[i : i + 50] for i in range(0, len(mainboard), 50)]
 
     sample_messages = build_tagging_prompt(batches[0] if batches else [])
