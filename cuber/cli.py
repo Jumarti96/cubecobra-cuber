@@ -240,13 +240,13 @@ def tag(
 
 @app.command("add-card")
 def add_card(
-    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     names: Optional[List[str]] = typer.Argument(None, help="Card name(s) to add"),
     from_file: Optional[str] = typer.Option(None, "--from-file", help="Text file with one card name per line"),
     stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
     maybeboard: bool = typer.Option(False, "--maybeboard", help="Add to maybeboard instead of mainboard"),
     count: Optional[int] = typer.Option(None, "--count", help="Add this many copies of each card (default: 1 per name supplied)"),
     no_verify: bool = typer.Option(False, "--no-verify", help="Skip Scryfall verification (bulk imports with known-good names)"),
+    id_or_slug: Optional[str] = typer.Option(None, "--cube", help="Cube ID (overrides current cube)"),
 ):
     """Add one or more cards to the cube mainboard (or maybeboard).
 
@@ -316,17 +316,12 @@ def add_card(
 
 @app.command()
 def swap(
-    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     old_name: Optional[str] = typer.Argument(None, help="Card name to remove"),
     new_name: Optional[str] = typer.Argument(None, help="Card name to add (verified via Scryfall)"),
     maybeboard: bool = typer.Option(False, "--maybeboard", help="Operate on maybeboard instead of mainboard"),
+    id_or_slug: Optional[str] = typer.Option(None, "--cube", help="Cube ID (overrides current cube)"),
 ):
     """Atomically replace one card with another. New card is verified via Scryfall first."""
-    # Shift args when current cube is set: swap <old> <new> (2 positional)
-    if new_name is None and old_name is not None:
-        new_name = old_name
-        old_name = id_or_slug
-        id_or_slug = None
     id_or_slug = resolve_cube_id(id_or_slug)
     if not old_name or not new_name:
         typer.echo("Provide old and new card names.", err=True)
@@ -352,13 +347,13 @@ def swap(
 
 @app.command("remove-card")
 def remove_card(
-    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
     names: Optional[List[str]] = typer.Argument(None, help="Card name(s) to remove"),
     from_file: Optional[str] = typer.Option(None, "--from-file", help="Text file with one card name per line"),
     stdin: bool = typer.Option(False, "--stdin", help="Read card names from stdin"),
     maybeboard: bool = typer.Option(False, "--maybeboard", help="Remove from maybeboard instead of mainboard"),
     count: Optional[int] = typer.Option(None, "--count", help="Remove only this many copies (default: 1 copy)"),
     all_copies: bool = typer.Option(False, "--all", help="Remove all copies of each named card"),
+    id_or_slug: Optional[str] = typer.Option(None, "--cube", help="Cube ID (overrides current cube)"),
 ):
     """Remove one or more cards from the cube mainboard (or maybeboard).
     By default removes 1 copy of each card. Use --all to remove all copies."""
