@@ -75,31 +75,42 @@ def _resolve_or_create_slug(title: str, short_id: str) -> str:
 # ── cubeJSON card → CSV row ────────────────────────────────────────────────────
 
 def _cubecobra_card_to_csv_row(card: Dict[str, Any]) -> Dict[str, str]:
-    """Map a cubeJSON card object to the v1 CSV column format."""
-    colors = card.get("colors") or []
-    tags = card.get("tags") or []
-    image_uris = card.get("image_uris") or {}
+    """Map a cubeJSON card object to the v1 CSV column format.
+
+    Supports both the old flat schema and the new nested 'details' schema.
+    """
+    details = card.get("details") or {}
+    src = details if details else card
+
+    colors = src.get("colors") or []
+    tags = src.get("tags") or []
+    image_uris = src.get("image_uris") or {}
     try:
-        cmc_int = str(int(float(card.get("cmc") or 0)))
+        cmc_int = str(int(float(src.get("cmc") or 0)))
     except (TypeError, ValueError):
         cmc_int = ""
+
+    # New schema uses 'type' instead of 'type_line'; 'colorcategory' instead of 'colorCategory'
+    type_line = src.get("type_line") or src.get("type", "")
+    color_cat = src.get("colorcategory") or src.get("colorCategory") or src.get("color_category") or ""
+
     return {
-        "name": card.get("name", ""),
+        "name": src.get("name", ""),
         "CMC": cmc_int,
-        "Type": card.get("type_line", ""),
+        "Type": type_line,
         "Color": "".join(colors),
-        "Set": (card.get("set") or "").upper(),
-        "Collector Number": card.get("collector_number", ""),
-        "Rarity": (card.get("rarity") or "").capitalize(),
-        "Color Category": card.get("colorCategory") or card.get("color_category") or "",
+        "Set": (src.get("set") or "").upper(),
+        "Collector Number": src.get("collector_number", ""),
+        "Rarity": (src.get("rarity") or "").capitalize(),
+        "Color Category": color_cat,
         "status": card.get("status", ""),
-        "Finish": card.get("finish") or "Non-Foil",
+        "Finish": src.get("finish") or "Non-Foil",
         "board": card.get("board", "mainboard"),
         "maybeboard": "false",
-        "image URL": card.get("image_normal") or image_uris.get("normal", ""),
+        "image URL": src.get("image_normal") or image_uris.get("normal", ""),
         "image Back URL": "",
         "tags": ";".join(str(t) for t in tags if t),
-        "Notes": card.get("notes", ""),
+        "Notes": src.get("notes", ""),
         "MTGO ID": "",
         "Custom": "false",
         "Voucher": "false",
@@ -249,6 +260,15 @@ def _fetch_csv_only(short_id: str) -> Dict[str, Any]:
             f"Cube '{short_id}' not found. Check the ID and ensure the cube is public."
         )
 
+    # Validate that we got actual CSV, not an HTML error page
+    stripped = content.lstrip()
+    if stripped.startswith("<!DOCTYPE") or stripped.startswith("<html") or "name" not in stripped.splitlines()[0].lower():
+        raise RuntimeError(
+            f"Cube '{short_id}' download returned invalid content (not CSV). "
+            f"The cube may have been moved or the short ID may have changed. "
+            f"Try using the CubeCobra UUID from the cube URL."
+        )
+
     slug = short_id
     cube_folder = os.path.join(CUBES_DIR, slug)
     remote_dir = os.path.join(cube_folder, "remote")
@@ -280,7 +300,7 @@ def _fetch_csv_only(short_id: str) -> Dict[str, Any]:
     primer_path = os.path.join(cube_folder, "primer.md")
     if not os.path.exists(primer_path):
         with open(primer_path, "w", encoding="utf-8") as f:
-            f.write(f"# {short_id}\n")
+            f.write(f"#{short_id}\n")
 
     print(f"  Note: cubeJSON unavailable; fetched CSV only.")
     print(f"\nCube project: cubes/{slug}/")
@@ -769,20 +789,26 @@ def assemble_export(id_or_slug: str, skip_scryfall: bool = False) -> Dict[str, A
 # ── add-package ────────────────────────────────────────────────────────────────
 
 def _package_card_to_csv_row(card: Dict[str, Any]) -> Dict[str, str]:
-    """Map a CubeCobra package card (Scryfall schema) to a CSV row."""
-    ci = card.get("color_identity") or []
+    """Map a CubeCobra package card to a CSV row.
+
+    Supports both old flat schema and new nested 'details' schema.
+    """
+    details = card.get("details") or {}
+    src = details if details else card
+
+    ci = src.get("color_identity") or []
     if isinstance(ci, str):
         ci = list(ci)
-    colors = card.get("colors") or ci
+    colors = src.get("colors") or ci
     if isinstance(colors, str):
         colors = list(colors)
     try:
-        cmc_int = str(int(float(card.get("cmc") or 0)))
+        cmc_int = str(int(float(src.get("cmc") or 0)))
     except (TypeError, ValueError):
         cmc_int = ""
-    type_line = card.get("type_line") or card.get("type") or ""
-    image_url = card.get("image_normal") or (card.get("image_uris") or {}).get("normal") or ""
-    color_cat = card.get("color_category") or card.get("colorCategory") or ""
+    type_line = src.get("type_line") or src.get("type") or ""
+    image_url = src.get("image_normal") or (src.get("image_uris") or {}).get("normal") or ""
+    color_cat = src.get("colorcategory") or src.get("color_category") or src.get("colorCategory") or ""
     if not color_cat:
         if len(ci) == 0:
             color_cat = "C"
@@ -791,22 +817,22 @@ def _package_card_to_csv_row(card: Dict[str, Any]) -> Dict[str, str]:
         else:
             color_cat = ci[0] if ci else ""
     return {
-        "name": card.get("name") or "",
+        "name": src.get("name") or "",
         "CMC": cmc_int,
         "Type": type_line,
         "Color": "".join(colors),
-        "Set": (card.get("set") or "").upper(),
-        "Collector Number": card.get("collector_number") or "",
-        "Rarity": (card.get("rarity") or "").capitalize(),
+        "Set": (src.get("set") or "").upper(),
+        "Collector Number": src.get("collector_number") or "",
+        "Rarity": (src.get("rarity") or "").capitalize(),
         "Color Category": color_cat,
         "status": card.get("status") or "",
-        "Finish": card.get("finish") or "Non-Foil",
-        "board": "mainboard",
+        "Finish": src.get("finish") or "Non-Foil",
+        "board": card.get("board", "mainboard"),
         "maybeboard": "false",
         "image URL": image_url,
         "image Back URL": "",
-        "tags": ";".join(str(t) for t in (card.get("tags") or []) if t),
-        "Notes": card.get("notes") or "",
+        "tags": ";".join(str(t) for t in (src.get("tags") or []) if t),
+        "Notes": src.get("notes") or "",
         "MTGO ID": "",
         "Custom": "false",
         "Voucher": "false",
@@ -814,20 +840,26 @@ def _package_card_to_csv_row(card: Dict[str, Any]) -> Dict[str, str]:
 
 
 def _package_card_to_enriched_card(card: Dict[str, Any]) -> Card:
-    """Convert a CubeCobra package card (Scryfall schema) to a Card dataclass."""
-    ci = card.get("color_identity") or []
+    """Convert a CubeCobra package card to a Card dataclass.
+
+    Supports both old flat schema and new nested 'details' schema.
+    """
+    details = card.get("details") or {}
+    src = details if details else card
+
+    ci = src.get("color_identity") or []
     if isinstance(ci, str):
         ci = list(ci)
-    colors = card.get("colors") or list(ci)
+    colors = src.get("colors") or list(ci)
     if isinstance(colors, str):
         colors = list(colors)
     try:
-        cmc = float(card.get("cmc") or 0)
+        cmc = float(src.get("cmc") or 0)
     except (TypeError, ValueError):
         cmc = 0.0
-    type_line = card.get("type_line") or card.get("type") or ""
-    image_url = card.get("image_normal") or (card.get("image_uris") or {}).get("normal") or ""
-    color_cat = card.get("color_category") or card.get("colorCategory") or ""
+    type_line = src.get("type_line") or src.get("type") or ""
+    image_url = src.get("image_normal") or (src.get("image_uris") or {}).get("normal") or ""
+    color_cat = src.get("colorcategory") or src.get("color_category") or src.get("colorCategory") or ""
     if not color_cat:
         if len(ci) == 0:
             color_cat = "C"
@@ -835,27 +867,27 @@ def _package_card_to_enriched_card(card: Dict[str, Any]) -> Card:
             color_cat = "M"
         else:
             color_cat = ci[0] if ci else ""
-    scryfall_id = card.get("scryfall_id") or card.get("_id") or card.get("id") or ""
+    scryfall_id = src.get("scryfall_id") or src.get("_id") or src.get("id") or ""
     return Card(
-        name=card.get("name") or "",
+        name=src.get("name") or "",
         scryfall_id=scryfall_id,
         cmc=cmc,
         type_line=type_line,
         color_identity=ci,
-        oracle_text=card.get("oracle_text") or "",
-        rarity=(card.get("rarity") or "").lower(),
-        set_code=(card.get("set") or "").lower(),
-        collector_number=card.get("collector_number") or "",
+        oracle_text=src.get("oracle_text") or "",
+        rarity=(src.get("rarity") or "").lower(),
+        set_code=(src.get("set") or "").lower(),
+        collector_number=src.get("collector_number") or "",
         color_category=color_cat,
-        board="mainboard",
-        finish=card.get("finish") or "Non-Foil",
+        board=card.get("board", "mainboard"),
+        finish=src.get("finish") or "Non-Foil",
         status=card.get("status") or "",
         image_url=image_url,
         colors=colors,
-        power=card.get("power"),
-        toughness=card.get("toughness"),
-        mana_cost=card.get("mana_cost"),
-        tags=[str(t) for t in (card.get("tags") or []) if t],
+        power=src.get("power"),
+        toughness=src.get("toughness"),
+        mana_cost=src.get("mana_cost"),
+        tags=[str(t) for t in (src.get("tags") or []) if t],
     )
 
 
