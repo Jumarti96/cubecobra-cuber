@@ -136,21 +136,20 @@ Before writing any files, display:
 
 List any "Needs Review" cards (missing or ambiguous oracle text).
 
-Ask: **"Write taxonomic_profile data and tagged.csv with these assignments? [y/N]"**
-
-Do not write files if the user says no.
+If you are about to call an external LLM (token-cost path), ask once: **"Proceed with LLM tagging? Estimated ~N input tokens. [y/N]"**
+If using deterministic rule-based tagging (free path), proceed directly to writing.
 
 ---
 
-### Step 4 — Write enriched.json and tagged.csv
+### Step 4 — Write all three artifacts
 
-On confirmation:
-1. Update each card's `taxonomic_profile` field in `enriched.json` using the Write tool.
-2. Write `cubes/<slug>/tagged.csv` using the Write tool — do NOT use shell echo or heredoc.
+Write in this exact order:
 
-The `tags` column in `tagged.csv` is derived from the `taxonomic_profile`: the union of `synergy_clusters`, `structural_roles`, and `mechanical_functions`, joined by semicolons. `macro_archetypes` is excluded from the CubeCobra export.
+1. **Update `enriched.json`** — write the full `taxonomic_profile` object to each card.
+2. **Backfill `mainboard.csv`** — write the `tags` column for every card row. Use the same logic as `cuber tag`: union of `synergy_clusters` + `structural_roles` + `mechanical_functions`, semicolon-separated, excluding `macro_archetypes`.
+3. **Write `tagged.csv`** — audit log with `name,tags` columns.
 
-Confirm: **"enriched.json and tagged.csv written to cubes/<slug>/"**
+Confirm: **"enriched.json, mainboard.csv, and tagged.csv updated in cubes/<slug>/"**
 
 Then instruct the user to run:
 ```
@@ -168,6 +167,7 @@ This assembles `cubes/<slug>/exports/import-ready.csv` — the file to upload to
 | Read enriched.json | Read `cubes/<slug>/enriched.json` |
 | Get oracle text | Read from enriched.json — never from training data |
 | Write enriched.json | Use the Write tool → `cubes/<slug>/enriched.json` |
+| Backfill mainboard.csv | Edit the `tags` column in `cubes/<slug>/mainboard.csv` |
 | Write tagged.csv | Use the Write tool → `cubes/<slug>/tagged.csv` |
 | Assemble export | `cuber export <id>` |
 
