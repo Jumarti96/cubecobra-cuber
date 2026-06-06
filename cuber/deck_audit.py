@@ -58,8 +58,10 @@ def land_color_production(lands: List[Dict[str, Any]]) -> Dict[str, int]:
             if basic_type in type_line:
                 produced.add(color)
 
-        for m in _ADD_SINGLE_RE.finditer(oracle):
-            produced.add(m.group(1).upper())
+        for line in oracle.splitlines():
+            if "add" in line.lower():
+                for m in re.finditer(r"\{([WUBRG])\}", line):
+                    produced.add(m.group(1).upper())
 
         if _ADD_ANY_RE.search(oracle):
             if _CONDITIONAL_ANY_RE.search(oracle):

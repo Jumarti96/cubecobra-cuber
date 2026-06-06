@@ -8,11 +8,33 @@ Produce a stats dashboard and full environmental read of a locally cached cube: 
 
 ---
 
-## IRON RULE
+## IRON RULES
+
+### Rule 1: Prove Membership Before Naming
+
+**Never name a card you have not confirmed exists in `cubes/<slug>/enriched.json` by exact name.**
+
+Before writing any card name in analysis output, primer text, or any section that references specific cards:
+1. Search `enriched.json` for the card by exact name.
+2. If not found: do not name the card. Use a different card that is present.
+3. If found: cite its `oracle_text` from enriched.json.
+
+Training-data knowledge of which cards "should be" in a cube is forbidden. The enriched.json is the sole source of truth for card membership.
+
+### Rule 2: Oracle Text Only
 
 **Never assume what a card does from prior knowledge.**
 Every card referenced in the analysis MUST cite `oracle_text` from `cubes/<slug>/enriched.json`.
-Training-data knowledge of card effects is forbidden. If the oracle text does not support the stated role, do not claim that role.
+If the oracle text does not support the stated role, do not claim that role.
+
+### Membership Extraction (Run Before Steps 2–9)
+
+Before writing any analysis that names specific cards, extract the full card name list from enriched.json into a script-readable format and keep it available for reference throughout all subsequent steps. Recommended:
+```powershell
+$json = Get-Content "cubes/<slug>/enriched.json" -Raw | ConvertFrom-Json
+$all_names = $json.cards | ForEach-Object { $_.name }
+# Use $all_names -contains "<card>" to verify membership before naming
+```
 
 ---
 
@@ -42,6 +64,28 @@ Stop and wait for the user to enrich.
 ---
 
 ## Workflow
+
+### Step 0 — Context Interview (Optional)
+
+After confirming enriched.json exists (and tags if applicable), but before running stats, ask the user:
+
+> **Any context about this cube's design philosophy, special rules, or labeling conventions? Press Enter to skip.**
+
+This is a free-text field. Do not ask structured questions — let the user volunteer whatever matters. Examples of useful context:
+
+- "All partner creatures and multicolor legendaries are my commander pool."
+- "The cube is designed for 4-player Commander draft, 3 packs of 20 cards."
+- "I house-ruled that all planeswalkers can be commanders."
+- "The 'C' tagged cards in the maybeboard are test cards I'm evaluating."
+
+If the user provides context:
+- Store it as `user_context` (plain text).
+- Thread it into relevant steps: use it to inform the Environment Characterization (Step 3), refine archetype framing (Step 4), ground Drafting Signals (Step 8), and contextualize Notable Cards (Step 9).
+- In the primer: the Overview section MUST incorporate any designer context provided. Other sections MAY reference it where relevant.
+
+If the user presses Enter with no text: `user_context` is empty. Proceed without it. All steps work normally without context — the interview exists to sharpen the analysis, not to gate it.
+
+After the interview (whether context was provided or skipped), proceed to Step 1.
 
 ### Step 1 — Run stats command
 
@@ -81,6 +125,7 @@ Read `cubes/<slug>/enriched.json`. Produce a single summary sentence capturing t
 - Power level signal (powered, unpowered, cubetutor-style, etc. — inferred from card names and oracle texts)
 - Dominant archetype themes (from top tags by card count if tagged; from oracle text patterns if not)
 - Any multicolor-reward signals
+- If `user_context` was provided in Step 0, incorporate it — e.g., if the designer said "all multicolor legendaries are commanders," note that explicitly in the characterization
 
 Example form: "Balanced unpowered environment with strong graveyard and sacrifice themes; two-color strategies are well-supported, with black and green as the deepest colors."
 
@@ -154,6 +199,8 @@ Identify 3–5 drafting signals specific to this cube:
 3. **Fixing traps**: color pairs that appear viable but score THIN or NONE on fixing
 4. Any curve or tempo traps worth flagging
 
+If `user_context` mentions draft format (e.g., "4-player draft"), adjust signal framing accordingly. If context describes a special draft rule or house rule, note how it changes drafting behavior.
+
 ---
 
 ### Step 9 — Notable Cards
@@ -166,6 +213,60 @@ Identify 5–10 cards that behave unusually in this cube's context. Candidates:
 - Cards that serve as key signals for an archetype
 
 Each entry MUST include the card's `oracle_text` from `enriched.json`.
+
+---
+
+### Step 10 — Self-Grill Gate (Hard Gate)
+
+Run this gate **before presenting any analysis to the user** and **before writing any primer**. This is a non-negotiable verification pass. Do not skip it.
+
+#### Membership Audit
+
+For every card name written in Steps 2–9 (and in any drafted primer sections), verify membership in enriched.json by exact name:
+
+```
+For each card name in the analysis output:
+  1. Confirm the card exists in enriched.json by exact name
+  2. If NOT found → remove the card from the analysis and replace with a card that IS present
+  3. If found → verify the oracle_text excerpt matches the enriched.json record
+```
+
+Run this check programmatically — do not rely on human review. Use a PowerShell one-liner that checks every named card against the `$all_names` list extracted in the Membership Extraction step:
+
+```powershell
+$json = Get-Content "cubes/<slug>/enriched.json" -Raw | ConvertFrom-Json
+$all_names = $json.cards | ForEach-Object { $_.name }
+@("Card A", "Card B", "Card C") | ForEach-Object { if ($all_names -contains $_) { Write-Host "OK: $_" } else { Write-Host "MISSING: $_" } }
+```
+
+**If any card fails membership:** replace it immediately. Do not present to the user until all named cards pass.
+
+#### Oracle Text Audit
+
+For each named card that passes membership:
+- Re-read its `oracle_text` from enriched.json
+- Verify the quoted excerpt in the analysis matches the enriched.json record
+- If the excerpt was generated from training data rather than enriched.json: replace it
+
+#### Output Masking
+
+If the analysis output contains any sentence of the form "In this cube, [Card] is stronger/weaker because..." but the card was not validated against its synergy cluster's card counts in enriched.json, remove or qualify the statement with actual data.
+
+#### Gate Must Pass
+
+The analysis is not complete until:
+1. All named cards pass the membership audit
+2. All oracle text excerpts match enriched.json
+3. No cards are named that were not confirmed present
+
+Report the result:
+```
+Self-grill: ✅ all cards verified in enriched.json
+```
+or
+```
+Self-grill: ❌ N cards failed — replaced before presentation
+```
 
 ---
 
@@ -217,10 +318,19 @@ Write only the sections the user selected. Tone: **informational and celebratory
 
 All card names mentioned in the primer MUST cite an oracle text excerpt from `enriched.json`.
 
+**Primer Self-Grill:** Before writing the primer file, run a second membership audit of all cards named in the primer draft. The primer gates are identical to the Step 10 self-grill:
+1. Every named card must exist in enriched.json by exact name
+2. Every oracle text excerpt must match the enriched.json record
+3. Any card that fails membership must be replaced before writing
+
+This is a separate pass from the Step 10 gate — the primer may introduce new card references that were not in the earlier analysis.
+
 **Section guidelines:**
 
 **1. Overview**
 Introduce the cube: title, size, format (if set), power level, and the central design philosophy. Frame what makes this cube distinctive.
+
+If `user_context` was provided in Step 0, the Overview MUST incorporate it. Designer context is part of the cube's identity — treat it as first-class information, not a footnote. For example, if the user said "I mark all partner cards and multicolor legendaries as commanders," state that clearly: "The 100 multicolor commander cards include all partner creatures and multicolor legendary creatures."
 
 **2. The Archetypes**
 Walk through each viable archetype from the viability matrix. For each: name it, describe the synergy cluster, name 2–3 key cards with oracle text excerpts. Frame partial archetypes as "emerging" or "build-around" rather than incomplete.
@@ -257,15 +367,19 @@ Primer written to: cubes/<slug>/primer.md
 | Task | How |
 |------|-----|
 | Resolve cube slug | `cuber list` |
+| Context interview | AskUserQuestion — free text, optional, press Enter to skip |
 | Compute all stats | `cuber stats <id>` |
 | Read structured stats | Read `cubes/<slug>/analysis.json` |
 | Check enriched.json exists | Read `cubes/<slug>/enriched.json` |
 | Check if tags exist | `enriched.json` → any card with non-null `taxonomic_profile` |
+| Extract full card name list | `enriched.json` → all `cards[].name` — extract once at start, reuse for all membership checks |
+| Verify card membership | `$all_names -contains "<card>"` before naming any card |
 | Read oracle texts | Read `cubes/<slug>/enriched.json` — never training data |
 | Read archetype tags | `enriched.json` → `taxonomic_profile.synergy_clusters` |
 | Count interaction cards | `enriched.json` → `taxonomic_profile.structural_roles` + `mechanical_functions` |
 | Read mana fixers | `enriched.json` → cards with `type_line` containing "Land" or oracle text with "add {" |
+| Self-grill membership audit | PowerShell check: every named card against `$all_names` → replace MISSING cards |
 | Section checklist | AskUserQuestion with multiSelect: true |
 | Check primer.md exists | Check `cubes/<slug>/primer.md` |
-| Write primer | Write tool → `cubes/<slug>/primer.md` or `primer_ai.md` |
+| Write primer | Write tool → `cubes/<slug>/primer.md` or `primer_ai.md` (after primer self-grill passes) |
 | Export primer | `cuber export <id>` (copies primer.md to exports/) |
