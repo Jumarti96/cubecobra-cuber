@@ -1529,3 +1529,7 @@ def add_package_cmd(
     typer.echo(f"\nEnriched {result['enriched_count']} card(s) in enriched.json.")
     if result["added"]:
         typer.echo(f"Run `cuber export {id_or_slug}` to assemble import-ready.csv.")
+
+
+if __name__ == "__main__":
+    app()
