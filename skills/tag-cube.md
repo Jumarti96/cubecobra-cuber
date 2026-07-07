@@ -96,6 +96,16 @@ Morph/Manifest          — face-down creatures; morph, megamorph, manifest
 Infect/Poison           — deals damage as -1/-1 counters or gives poison counters
 ```
 
+**Keyword-Ability Matters (generalizing Tribal/Kindred to keyword abilities).** Tribal/Kindred
+covers creature-TYPE synergy. The same logic applies to creature-ABILITY synergy, which has no
+canonical cluster of its own. When a payoff explicitly counts or rewards a keyword ability shared
+by other creatures (e.g. "for each creature with defender you control"), or a creature's identity
+centers on an uncommon, build-around keyword (a vanilla Wall whose only text is "Defender" — not a
+universally-common keyword like Vigilance or Trample), assign a free-form synergy_cluster named
+`"<Keyword> Matters"` (e.g. `"Defender Matters"`) to both the payoff and every bearer card. This is
+the identical rule and worked example (`Wingmantle Chaplain` + `Academy Wall`) used by the `cuber
+tag` LLM prompt in `cuber/tagger.py` — keep the two in sync if either changes.
+
 ---
 
 #### Pillar 3 — `structural_roles`

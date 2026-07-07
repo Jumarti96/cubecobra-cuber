@@ -44,5 +44,8 @@ openspec/
 # Temp scripts written by build-deck during a run (gitignored for all users)
 _workspace/
 
+# Skill-creator eval workspaces (scratch, not committed)
+*-workspace/
+
 # Current cube config (local only — do not commit)
 .cuber-config.json
