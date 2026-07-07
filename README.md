@@ -287,6 +287,14 @@ After the analysis, optionally generates a formatted **primer document** for the
 
 ---
 
+### `/discover-archetypes <id>`
+
+Discovers every viable draft archetype in a cube — deeply-supported core strategies down to single-card build-arounds — with the cards that make each one work. Starts from `taxonomic_profile` tags but actively hunts for untagged supporting cards by reasoning over oracle text (a big graveyard-bound creature with no `Reanimator` tag is still a reanimation target if the cube has a reanimation effect). Considers all rarities. Supports a default organic-discovery mode and a guided-coverage mode where you specify what must be classified (e.g. "classify every rare, mythic, and multicolor uncommon"). Writes a tiered report (`Core` / `Supported` / `Build-Around`) to `archetypes.md` plus a machine-readable `archetypes.csv`. Requires `cuber tag <id>` to have been run first.
+
+**Example:** `/discover-archetypes obc` → "what archetypes does this cube support?"
+
+---
+
 ### `/build-deck <id>`
 
 Builds a deck from your cube in any supported format. Uses a discovery-first approach: the skill finds viable win conditions in the pool before any strategy is declared, presents a shortlist of 3–5 pipelines, lets you pick or override, then assembles the deck with proportionally-reasoned slot allocations. A two-agent self-grill gate runs before the final list is shown.

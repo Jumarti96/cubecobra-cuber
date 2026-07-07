@@ -159,6 +159,18 @@ Cluster definitions (key ones):
 - Kicker/Scaling: kicker, multikicker, overload, escalate mechanics
 - Infect/Poison: deals damage as -1/-1 counters or poison counters
 
+### Keyword-Ability Matters (generalizing Tribal/Kindred to keyword abilities)
+Tribal/Kindred covers creature-TYPE synergy (Elves, Goblins, ...). The same logic applies to
+creature-ABILITY synergy, which has no canonical cluster of its own. When a payoff's oracle text
+explicitly counts or rewards a keyword ability shared by other creatures (e.g. "for each creature
+with defender you control," "creatures with flying get +1/+1"), or a creature's identity centers on
+an uncommon, build-around keyword (a vanilla Wall whose only rules text is "Defender" — not a
+universally-common keyword like Vigilance or Trample, which is too widespread to signal a theme),
+assign a free-form synergy_cluster named "<Keyword> Matters" (e.g. "Defender Matters") to BOTH the
+payoff card and every bearer card, even within a single batch of 50. Later analysis decides whether
+a real archetype exists — your job here is only to make the shared keyword visible in the tags,
+exactly as Tribal/Kindred already does for creature types.
+
 ════════════════════════════════════════════════════════════
 PILLAR 3 — structural_roles
 ════════════════════════════════════════════════════════════
@@ -197,6 +209,17 @@ Card: Bonecrusher Giant // Stomp
 Type: Creature — Giant // Instant — Adventure
 Oracle: [Stomp] Damage can't be prevented this turn. Stomp deals 2 damage to any target. // [Bonecrusher Giant] Whenever Bonecrusher Giant becomes the target of a spell, it deals 2 damage to that spell's controller.
 
+Card: Wingmantle Chaplain
+Type: Creature — Human Cleric
+Oracle: Defender
+When this creature enters, create a 1/1 white Bird creature token with flying for each creature with defender you control.
+Whenever another creature you control with defender enters, create a 1/1 white Bird creature token with flying.
+
+Card: Academy Wall
+Type: Creature — Wall
+Oracle: Defender
+Whenever you cast an instant or sorcery spell, you may draw a card. If you do, discard a card. This ability triggers only once each turn.
+
 Output:
 [
   {{
@@ -215,6 +238,24 @@ Output:
       "synergy_clusters": ["Spellslinger"],
       "structural_roles": ["Interaction/Disruption", "Standalone Threat"],
       "mechanical_functions": ["Targeted Removal", "Direct Damage", "Damage Prevention Override"]
+    }}
+  }},
+  {{
+    "card_name": "Wingmantle Chaplain",
+    "taxonomic_profile": {{
+      "macro_archetypes": ["Midrange"],
+      "synergy_clusters": ["Tokens", "Defender Matters"],
+      "structural_roles": ["Payload/Payoff", "Enabler/Fodder"],
+      "mechanical_functions": ["Token Generation"]
+    }}
+  }},
+  {{
+    "card_name": "Academy Wall",
+    "taxonomic_profile": {{
+      "macro_archetypes": ["Control"],
+      "synergy_clusters": ["Spellslinger", "Defender Matters"],
+      "structural_roles": ["Engine/Outlet", "Infrastructure/Consistency"],
+      "mechanical_functions": ["Card Selection", "Looting"]
     }}
   }}
 ]
