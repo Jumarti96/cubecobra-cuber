@@ -98,7 +98,13 @@ State the active mode (and the parsed filter, if Guided) at the top of the final
 
 ## Step 1 — Aggregate Seeds
 
-Write a small script to `cubes/<slug>/_workspace/aggregate_seeds.py` that reads
+Generate a run token unique to this invocation before writing anything — UTC timestamp + short random suffix, e.g. `run-20260709T041210-a3f9`:
+```
+python -c "import datetime,uuid; print('run-'+datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%S')+'-'+uuid.uuid4().hex[:4])"
+```
+This keeps concurrent runs on the same cube from colliding on the same filename.
+
+Write a small script to `cubes/<slug>/_workspace/<run-token>/aggregate_seeds.py` that reads
 `cubes/<slug>/enriched.json` and buckets mainboard cards by taxonomy, so you're reasoning over
 counts instead of scrolling raw JSON. Roughly:
 
@@ -337,7 +343,7 @@ Data written to: cubes/<slug>/archetypes.csv
 |------|-----|
 | Resolve cube slug | `cuber list` |
 | Check tag coverage | `enriched.json` → any mainboard card with non-null `taxonomic_profile` |
-| Aggregate seeds by cluster/macro archetype | Write + run `cubes/<slug>/_workspace/aggregate_seeds.py` (Step 1) |
+| Aggregate seeds by cluster/macro archetype | Write + run `cubes/<slug>/_workspace/<run-token>/aggregate_seeds.py` (Step 1) |
 | Optional precomputed cross-check | `cubes/<slug>/exports/analysis.json` → `archetype_clusters` |
 | Find untagged support by effect | `cuber search <id> --oracle "<regex>" --color <c> --rarity <r> --cmc-min/--cmc-max --type <t>` |
 | Find support by existing tag | `cuber search <id> --tag "<Synergy Cluster>"` |

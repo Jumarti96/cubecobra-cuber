@@ -11,7 +11,7 @@ Build a deck from a locally cached cube in any supported format. Cards must come
 ## IRON RULE
 
 **Never assume what a card does from prior knowledge.**
-Every inclusion and justification MUST cite `oracle_text` from the working pool cache (`_workspace/<deck-slug>_working_pool.json`). Phase 9 agents cite oracle text from the grill input bundle (`_workspace/<deck-slug>_grill_input.json`).
+Every inclusion and justification MUST cite `oracle_text` from the working pool cache (`_workspace/run-<token>/working_pool.json`). Phase 9 agents cite oracle text from the grill input bundle (`_workspace/run-<token>/grill_input.json`).
 If the oracle text does not support the stated role, the card must be replaced.
 
 ---
@@ -43,10 +43,15 @@ cuber tag <id>      ← required; taxonomic_profile drives pipeline discovery
 
 Run at the very start of Phase 0, before any user prompts or analysis:
 
-1. Create `_workspace/` in the repo root if it does not exist
-2. Delete all `_workspace/_tmp_*.py` files left over from any previous run
+1. Generate a **run token** unique to this invocation: UTC timestamp + short random suffix, e.g. `run-20260709T041210-a3f9`. Generate it with:
+   ```
+   python -c "import datetime,uuid; print('run-'+datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%S')+'-'+uuid.uuid4().hex[:4])"
+   ```
+2. Create `_workspace/<run-token>/` in the repo root. This is this run's private scratch directory — track the path for the rest of the session.
 
-All temporary Python scripts written during this run go into `_workspace/` (e.g., `_workspace/_tmp_pool.py`, `_workspace/_tmp_audit.py`). No temp scripts are ever written to the repo root.
+Every file this run writes — the working pool cache, the grill input bundle, every temp Python script, every intermediate audit/dump — goes inside `_workspace/<run-token>/`, never at `_workspace/` root and never at the repo root. Concurrent runs (yours or another session's) each get their own token, so they can never read or overwrite each other's files.
+
+Do not delete anything outside your own `_workspace/<run-token>/` directory. A run may clean up only its own run directory when finished; never glob-delete across `_workspace/` — another run's in-flight files may live there.
 
 ### Pool Restrictions
 
@@ -79,7 +84,7 @@ Once confirmed, pass `card_pool_rules` to `cube_search.load_merged_pool(id, card
 
 ### Working Pool Cache
 
-After loading the filtered pool, write `_workspace/<deck-slug>_working_pool.json`. Since the deck name is not yet known at Phase 0, derive a temporary slug from the color identity and current timestamp (e.g., `pool-multicolor-20260524143000`). Track this path — all subsequent phases reference it.
+After loading the filtered pool, write `_workspace/<run-token>/working_pool.json`. The run token from Workspace Setup already guarantees uniqueness, so no deck-slug or extra timestamp is needed in the filename. Track this path — all subsequent phases reference it.
 
 Include per-card fields: `name`, `oracle_text`, `colors`, `color_identity`, `taxonomic_profile`, `cmc`, `type_line`, `rarity`, `board`.
 
@@ -113,7 +118,7 @@ Note: card pool restrictions were collected in Phase 0. Do not re-ask them here.
 
 ## Phase 2: Deck Identity (Discovery)
 
-Load card data from the working pool cache: `_workspace/<deck-slug>_working_pool.json`. Do not call `cube_search.load_merged_pool` or read `enriched.json`.
+Load card data from the working pool cache: `_workspace/<run-token>/working_pool.json`. Do not call `cube_search.load_merged_pool` or read `enriched.json`.
 
 ### Step 0: Environment Profile
 
@@ -367,7 +372,7 @@ Challenger evaluates sideboard cohesion in Phase 9.
 
 ## Phase 8: Grill Input Bundle
 
-Before spawning Phase 9 agents, write `_workspace/<deck-slug>_grill_input.json`. If the deck is not yet named, derive a slug from the color identity and strategy type (e.g., `bg-graveyard`).
+Before spawning Phase 9 agents, write `_workspace/<run-token>/grill_input.json` — inside this run's own directory from Workspace Setup, never at a shared or deck-slug-derived path.
 
 The bundle contains:
 - `deck`: array of all mainboard + sideboard cards, each with `name`, `oracle_text`, `colors`, `color_identity`, `cmc`, `type_line`, `rarity`, `role` (assigned in Phase 5), and `board`
@@ -386,7 +391,7 @@ Spawn two parallel Agent calls. Neither agent sees the other's output during gen
 
 ### Proposer Agent
 
-Read `_workspace/<deck-slug>_grill_input.json` for all card data. Do not read `enriched.json` or any other cube data file.
+Read `_workspace/<run-token>/grill_input.json` for all card data. Do not read `enriched.json` or any other cube data file.
 
 Defend the full deck list (main + sideboard). For every card:
 - State its role in the strategy
@@ -397,7 +402,7 @@ Defend the full deck list (main + sideboard). For every card:
 
 ### Challenger Agent
 
-Read `_workspace/<deck-slug>_grill_input.json` for all card data. Do not read `enriched.json` or any other cube data file.
+Read `_workspace/<run-token>/grill_input.json` for all card data. Do not read `enriched.json` or any other cube data file.
 
 Attack the deck independently. Challenger is the sole verifier for all hard checks — there is no pre-grill phase before this:
 1. **Cube membership** — verify each card exists in the `working_pool` array of the bundle by exact name; flag any phantom inclusions (MUST be removed)
@@ -638,4 +643,4 @@ Saved:
 | Verify card exists | Search working pool cache by exact name — never training data |
 | Read oracle text | `card.oracle_text` from working pool cache (main session) or grill bundle (Phase 9 agents) — never training data |
 | Write deck files | Write tool → `cubes/<id>/decks/<name>/deck.json` and `deck.tsv`. `exporter.write_mwdeck()` → `deck.mwDeck`. `exporter.write_deck_analysis_md()` → `analysis.md` |
-| Write a temp Python script | `_workspace/_tmp_<name>.py` — never to the repo root |
+| Write a temp Python script | `_workspace/<run-token>/_tmp_<name>.py` — never to the repo root or shared `_workspace/` root |
