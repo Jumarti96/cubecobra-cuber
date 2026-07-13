@@ -128,6 +128,7 @@ cubes/
     maybeboard.csv         ← your working maybeboard
     enriched.json          ← Scryfall-enriched card data (auto-generated)
     tagged.csv             ← cards with AI functional tags (auto-generated)
+    dossier.json           ← deck-independent cube facts (written by `cuber dossier`)
     decks/
       aggro-rg/            ← deck built by /build-deck (one folder per deck)
         deck.json          ← full deck data (cards, mana audit, restrictions)
@@ -211,6 +212,9 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 | `stats <id> --md` | Write `exports/analysis.md` with YAML frontmatter and Markdown tables (also prints charts). | `cuber stats obc --md` |
 | `tag <id>` | AI-tag all cards using oracle text. Writes `tagged.csv`. Requires LLM config. | `cuber tag obc` |
 | `tag <id> --overwrite` | Replace existing tags instead of merging. | `cuber tag obc --overwrite` |
+| `dossier <id>` | Build the **cube dossier** — deck-independent cube facts, cached at `cubes/<id>/dossier.json`. Mana infrastructure (with tapped/self-bounce land flags), structural censuses (rituals, sweepers, sacrifice outlets, cost reducers), tribal rosters, threat profile, and pool limits. Used by `/build-deck`. | `cuber dossier obc` |
+| `dossier <id> --rebuild` | Recompute even if a fresh dossier is cached. Authored `interaction_chains` are preserved. | `cuber dossier obc --rebuild` |
+| `dossier <id> --json` | Print the full dossier as JSON instead of a summary. | `cuber dossier obc --json` |
 | `search <id>` | Search the local enriched card pool by any combination of criteria. | `cuber search obc --color B --type creature` |
 | `search <id> --color W,U` | Filter by color identity (subset match). | `cuber search obc --color W,U` |
 | `search <id> --type <str>` | Substring match on type line. | `cuber search obc --type instant` |
@@ -308,12 +312,27 @@ Builds a deck from your cube in any supported format. Uses a discovery-first app
 **Phase flow:**
 - **Phase 0 — Card Pool Definition:** Creates `_workspace/` and clears temp scripts from the previous run, then optionally restricts the pool (copy limits per rarity, specific card exclusions). The skill infers a `card_pool_rules` object from natural language and confirms before proceeding.
 - **Phase 1 — Interview:** Cube, format, optional color preference, intent (Competitive / Experimental / Fun / Specific Constraint), power level.
-- **Phase 2 — Discovery:** Finds Payoff/Payoff candidates via `taxonomic_profile.structural_roles`, validates each against Enabler/Fodder and Engine/Outlet counts per `synergy_clusters`, produces a viable pipeline shortlist.
+- **Phase 2 — Discovery:** Builds/loads the **cube dossier** (`cuber dossier <id>`), then finds Payoff candidates via `taxonomic_profile.structural_roles`, validates each against Enabler/Fodder and Engine/Outlet counts per `synergy_clusters`, and produces a viable pipeline shortlist. Also authors the dossier's `interaction_chains` — oracle-grounded card combinations that tags alone cannot express ("card A changes card B's type so card C can eat it").
 - **Phase 3 — Strategy Selection:** Shows the shortlist with a recommendation based on your intent. You accept, pick another, or describe your own constraint.
 - **Phase 4 — Commander Selection** (commander formats only): finds valid commanders, handles partners.
-- **Phase 5 — Deck Build:** All slot allocations expressed as proportions of deck size N, with rationale for each. Mana sources derived from pip demand.
-- **Phases 6–9:** Mana audit, sideboard, pre-grill check, self-grill (two parallel agents — proportional reasoning is validated alongside cube membership and oracle text).
-- **Re-evaluation:** If the self-grill challenger declares a pipeline fundamentally broken, the skill automatically tries the next pipeline from the Phase 3 shortlist without restarting discovery.
+- **Phase 5 — Deck Build:** An independent, cold-context **Builder agent** assembles the deck from a hashed JSON bundle. All slot allocations are expressed as proportions of deck size N, with rationale for each. Mana sources are derived from pip demand.
+- **Phases 6–9:** Mana audit, sideboard, pre-grill check, self-grill (parallel Proposer + Challenger agents — proportional reasoning is validated alongside cube membership and oracle text). One grill round by default; a second only on a hard finding.
+- **Re-evaluation:** If the self-grill challenger declares a pipeline fundamentally broken, the skill automatically tries the next pipeline from the Phase 3 shortlist without restarting discovery. A *colour-allocation* observation, by contrast, is advisory only — the deck is always built in the colours you locked.
+
+**Isolation model — what crosses between decks, and what never does.** Deck-building agents start
+informed about the **cube** and ignorant of every other **deck**:
+
+| Knowledge | Scope | Crosses? |
+|---|---|---|
+| Cube facts, interaction chains, pool limits | the cube | **Yes** — via the dossier |
+| Card-quality verdicts | the (card, list) pair | **Never** — only the agent that owns the list may form one |
+| Orchestrator conclusions | opinion | **Never** |
+
+The dossier is frozen *before the first deck is built*, so it is structurally incapable of carrying a
+finding about any deck, and every deck in a session embeds the same `dossier_sha256`. That is what
+lets you build four decks in one session without deck 2 inheriting deck 1's conclusions — a cost
+reducer correctly cut from a deck whose kill is an activated ability must be **re-evaluated from
+scratch** for the next deck, where it may discount most of the list.
 
 **Example:** `/build-deck obc` → "40-card, Competitive intent, surprise me on colors"
 
