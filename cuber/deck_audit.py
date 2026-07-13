@@ -75,6 +75,25 @@ def land_color_production(lands: List[Dict[str, Any]]) -> Dict[str, int]:
     return {k: round(v) for k, v in counts.items()}
 
 
+# Tags the tagger actually emits for cards that accelerate mana. These must match
+# tagger.MECHANICAL_FUNCTIONS_BASE verbatim (plus "Fast Mana", which the tagger emits
+# in practice). Comparison is case-insensitive on the whole tag, not a substring search:
+# an earlier version tested `"ramp" in tags`, which never matched "Mana Ramp" and so
+# silently reported ramp_count == 0 for every deck.
+RAMP_TAGS = frozenset({
+    "mana ramp",
+    "mana rock",
+    "mana dork",
+    "land fetch",
+    "fast mana",
+})
+
+
+def is_ramp_card(card: Dict[str, Any]) -> bool:
+    """True if the card carries any tagger tag denoting mana acceleration."""
+    return any((t or "").strip().lower() in RAMP_TAGS for t in (card.get("tags") or []))
+
+
 def burgess_formula(color_count: int, commander_cmc: float, deck_size: int) -> int:
     """Burgess commander land count: round((31 + color_count + commander_cmc) * deck_size / 100)."""
     return round((31 + color_count + commander_cmc) * deck_size / 100)
@@ -200,7 +219,7 @@ def mana_audit(
     """
     lands = [c for c in deck_cards if "land" in (c.get("type_line") or "").lower()]
     non_lands = [c for c in deck_cards if "land" not in (c.get("type_line") or "").lower()]
-    ramp = [c for c in non_lands if "ramp" in [t.lower() for t in (c.get("tags") or [])]]
+    ramp = [c for c in non_lands if is_ramp_card(c)]
     deck_size = len(deck_cards)
     land_count = len(lands)
 
