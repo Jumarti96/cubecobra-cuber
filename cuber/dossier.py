@@ -24,6 +24,19 @@ from .cube import Card, Cube, cube_dir, load_enriched, load_meta
 
 DOSSIER_FILENAME = "dossier.json"
 
+# Bump whenever census semantics change: a cached dossier built under older semantics
+# is invalid even if the cube itself has not changed (load_dossier discards it).
+DOSSIER_VERSION = 2
+
+# A regex census can prove presence. It cannot prove absence. Every consumer of this
+# file must read pool_limits through this caveat.
+CENSUS_CAVEAT = (
+    "Every census entry is a regex probe over oracle text. A probe that matched 0 cards proves "
+    "nothing: no-match is not the same as does-not-exist. Only positive matches, with the oracle "
+    "text they matched, are facts. Never treat a 0-match line as a hard constraint on what a deck "
+    "can do — verify against the actual oracle text in your pool before relying on it."
+)
+
 # ── Oracle-text probes ────────────────────────────────────────────────────────
 # Every probe below is a syntactic match on oracle text. None of them judges a card.
 
@@ -301,16 +314,29 @@ def _threat_profile(cards: List[Card]) -> Dict[str, Any]:
 
 
 def _pool_limits(census: Dict[str, Any], mana: Dict[str, Any], threat: Dict[str, Any]) -> List[str]:
-    """Hard negatives, stated as counts. A deck that does not know these re-derives them badly."""
+    """Probe results a deck would otherwise re-derive badly.
+
+    Positive findings (cards named, oracle-backed) are facts. Zero-match findings are
+    reported as exactly that — which probe matched nothing — never as an impossibility:
+    the ritual probe cannot see untap-lands effects, mana multipliers, or free spells,
+    and asserting "storm cannot be accelerated" from it once poisoned a whole session.
+    """
     limits: List[str] = []
 
     if census["rituals"]["count"] == 0:
         limits.append(
-            "0 nonland cards produce more mana than they cost on the turn they are cast "
-            "(no rituals). Storm counts cannot be built with mana acceleration."
+            "Ritual probe (a nonland 'Add ...' clause producing more mana than the card's cost, "
+            "non-repeatable) matched 0 cards. No-match is not does-not-exist: this probe cannot "
+            "see untap-lands effects, mana multipliers, cost reducers, or free spells, which can "
+            "accelerate mana just as well. Check the pool's oracle text before treating "
+            "acceleration as unavailable."
         )
     if not census["haste_granters"]:
-        limits.append("0 cards grant haste to another creature. Tokens cannot attack the turn they arrive.")
+        limits.append(
+            "Haste-grant probe ('gains/have/has haste') matched 0 cards. No-match is not "
+            "does-not-exist: effects phrased differently (e.g. 'can attack as though it had "
+            "haste', unearth, dash) are invisible to this probe."
+        )
 
     lairs = sorted({
         land["name"]
@@ -330,14 +356,16 @@ def _pool_limits(census: Dict[str, Any], mana: Dict[str, Any], threat: Dict[str,
             "copy limits; every nonbasic land in the pool is listed under lands_by_identity."
         )
 
-    # Answer gaps by colour — the fact that drives sideboard construction.
+    # Answer gaps by colour — the probe result that drives sideboard construction.
     for label, key in (("artifact", "artifact_answers"), ("enchantment", "enchantment_answers")):
         colors_with = {c for k in threat[key]["by_color"] for c in k if c != "C"}
         missing = sorted(set("WUBRG") - colors_with)
         if missing:
             limits.append(
-                f"No mono-colour {label} removal exists in: {', '.join(missing)}. "
-                f"A deck in those colours cannot answer {label}s without splashing or a colourless answer."
+                f"{label.capitalize()}-removal probe ('destroy/exile target {label}...') matched "
+                f"0 mono-colour cards in: {', '.join(missing)}. No-match is not does-not-exist: "
+                f"sacrifice effects, bounce, theft, or -X/-X are invisible to this probe. Verify "
+                f"before concluding those colours cannot answer {label}s."
             )
     return limits
 
@@ -366,7 +394,9 @@ def build_dossier(id_or_slug: str) -> Dict[str, Any]:
     existing = load_dossier(id_or_slug, validate=False) or {}
 
     return {
+        "dossier_version": DOSSIER_VERSION,
         "cube_fingerprint": _fingerprint(id_or_slug),
+        "census_caveat": CENSUS_CAVEAT,
         "environment": environment,
         "mana_infrastructure": mana,
         "structural_census": census,
@@ -375,6 +405,8 @@ def build_dossier(id_or_slug: str) -> Dict[str, Any]:
         "pool_limits": _pool_limits(census, mana, threat),
         # Authored during cube investigation; no script can derive these. Preserved on rebuild.
         "interaction_chains": existing.get("interaction_chains", []),
+        # Set by the seed authoring pass (an agent reading the cube's oracle text); preserved here.
+        "chains_seeded_at": existing.get("chains_seeded_at"),
     }
 
 
@@ -393,7 +425,10 @@ def load_dossier(id_or_slug: str, validate: bool = True) -> Optional[Dict[str, A
         return None
     with open(path, encoding="utf-8") as f:
         dossier = json.load(f)
-    if validate and dossier.get("cube_fingerprint") != _fingerprint(id_or_slug):
+    if validate and (
+        dossier.get("cube_fingerprint") != _fingerprint(id_or_slug)
+        or dossier.get("dossier_version") != DOSSIER_VERSION
+    ):
         return None
     return dossier
 
@@ -432,7 +467,8 @@ def format_dossier_summary(dossier: Dict[str, Any]) -> str:
                 f"  +{d['self_bouncing']} Lair"
             )
 
-    lines += ["", "Pool limits:"]
+    lines += ["", "Pool limits (probe results — see census_caveat; 0-match proves nothing):"]
     lines += [f"  - {lim}" for lim in dossier["pool_limits"]]
-    lines += ["", f"Interaction chains authored: {len(dossier['interaction_chains'])}"]
+    seeded = dossier.get("chains_seeded_at") or "never"
+    lines += ["", f"Interaction chains authored: {len(dossier['interaction_chains'])} (seeded: {seeded})"]
     return "\n".join(lines)
