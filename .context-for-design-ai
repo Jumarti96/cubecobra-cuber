@@ -20,6 +20,7 @@ cuber/
   cubecobra.py    — CubeCobra API client
   scryfall.py     — Scryfall API client
   tagger.py       — AI functional tagger
+  dossier.py      — cube dossier: deck-independent cube facts (census only, no verdicts)
   deck_builder.py — AI deck builder
 ```
 
@@ -28,8 +29,33 @@ Each cube lives under `cubes/<slug>/`:
 - `maybeboard.csv` — working maybeboard
 - `enriched.json` — Scryfall metadata cache
 - `tagged.csv` — AI functional tags
+- `dossier.json` — deck-independent cube facts, cached (`cuber dossier`)
 - `remote/` — pristine snapshot from last fetch (never edit)
 - `decks/`, `exports/` — generated artifacts
+
+## Cube Dossier & Deck Isolation (Important)
+
+`cuber/dossier.py` computes **deck-independent** facts about a cube: mana infrastructure (with
+`enters_tapped` / `conditionally_tapped` / `self_bounce` land flags, and per-pair dual counts where
+`free` excludes self-bouncing Lairs), structural censuses (rituals, cost reducers, sacrifice outlets
+with a `free` flag, tutors, sweepers, haste granters, graveyard hate), tribal rosters, a threat
+profile (what the cube's *other* decks do — this is what a sideboard is built against), and hard
+`pool_limits`. It is cached at `cubes/<slug>/dossier.json` and invalidated by `(card_count,
+fetched_at)` from `meta.json`.
+
+The census is copy-count agnostic — pool rules (multipliers, exclusions) vary per run, so the dossier
+describes the cube itself and leaves copy math to callers.
+
+`interaction_chains` is the one section no script can produce. It is authored during `/build-deck`
+Phase 2 and **preserved across `--rebuild`**. Chains state how cards compose, quoting oracle text —
+e.g. "A's text says X, B's says Y, therefore Z is legal". They never rank a card.
+
+**The invariant that matters:** the dossier carries *facts*, never *verdicts*. A card-quality verdict
+is a property of the pair (card, list), not of the card — so it may only be formed by the agent that
+owns the list. The dossier is frozen before the first deck is built, which makes it structurally
+incapable of carrying a finding about any deck. That is what allows several decks to be built in one
+session without deck N inheriting deck N-1's conclusions. If you extend `dossier.py`, keep every new
+field checkable against oracle text or a pool count, and never add a field that ranks a card.
 
 ## Ops REPL Grammar (Important)
 

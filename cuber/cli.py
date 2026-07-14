@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 import typer
 
-from . import scryfall, stats as stats_mod, exporter, tagger, cubecobra
+from . import scryfall, stats as stats_mod, exporter, tagger, cubecobra, dossier as dossier_mod
 from .cube import CUBES_DIR, find_cube_dir, load_cube_from_mainboard_csv, load_enriched, load_meta, save_enriched
 from .cube_manager import (
     CONFIG_PATH,
@@ -236,6 +236,41 @@ def tag(
     path = exporter.write_tagged_csv(cube, id_or_slug)
     typer.echo(f"Audit log: {path}")
     typer.echo("Run `cuber export <id>` to assemble import-ready.csv.")
+
+
+@app.command()
+def dossier(
+    id_or_slug: Optional[str] = typer.Argument(None, help="CubeCobra short ID or cube slug"),
+    rebuild: bool = typer.Option(False, "--rebuild", help="Recompute even if a fresh dossier is cached"),
+    json_out: bool = typer.Option(False, "--json", help="Print the dossier as JSON instead of a summary"),
+):
+    """Build the cube dossier — deck-independent cube facts, cached at cubes/<id>/dossier.json.
+
+    Holds the mana infrastructure, structural censuses (rituals, sweepers, sac outlets),
+    tribal rosters, threat profile and pool limits. Authored interaction_chains are preserved
+    across rebuilds. Contains no card-quality verdicts by construction.
+    """
+    id_or_slug = resolve_cube_id(id_or_slug)
+
+    cached = None if rebuild else dossier_mod.load_dossier(id_or_slug)
+    if cached is not None:
+        d = cached
+        source = "cached"
+    else:
+        try:
+            d = dossier_mod.build_dossier(id_or_slug)
+        except FileNotFoundError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1)
+        path = dossier_mod.save_dossier(d, id_or_slug)
+        source = f"written to {path}"
+
+    if json_out:
+        typer.echo(json.dumps(d, ensure_ascii=False, indent=1))
+        return
+
+    typer.echo(dossier_mod.format_dossier_summary(d))
+    typer.echo(f"\n({source})")
 
 
 @app.command("add-card")
