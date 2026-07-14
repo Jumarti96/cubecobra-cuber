@@ -26,7 +26,7 @@ DOSSIER_FILENAME = "dossier.json"
 
 # Bump whenever census semantics change: a cached dossier built under older semantics
 # is invalid even if the cube itself has not changed (load_dossier discards it).
-DOSSIER_VERSION = 2
+DOSSIER_VERSION = 3
 
 # A regex census can prove presence. It cannot prove absence. Every consumer of this
 # file must read pool_limits through this caveat.
@@ -35,6 +35,15 @@ CENSUS_CAVEAT = (
     "nothing: no-match is not the same as does-not-exist. Only positive matches, with the oracle "
     "text they matched, are facts. Never treat a 0-match line as a hard constraint on what a deck "
     "can do — verify against the actual oracle text in your pool before relying on it."
+)
+
+# The same asymmetry applies to the authored layer: a chain proves an engine exists;
+# no chain proves nothing.
+CHAINS_CAVEAT = (
+    "interaction_chains is an authored, known-incomplete list. Absence of a chain is not absence "
+    "of an engine — the cube may contain engines no chain records. Derive card compositions from "
+    "oracle text first; use chains as recorded evidence of engines that exist, never as the "
+    "boundary of what exists."
 )
 
 # ── Oracle-text probes ────────────────────────────────────────────────────────
@@ -404,6 +413,7 @@ def build_dossier(id_or_slug: str) -> Dict[str, Any]:
         "threat_profile": threat,
         "pool_limits": _pool_limits(census, mana, threat),
         # Authored during cube investigation; no script can derive these. Preserved on rebuild.
+        "chains_caveat": CHAINS_CAVEAT,
         "interaction_chains": existing.get("interaction_chains", []),
         # Set by the seed authoring pass (an agent reading the cube's oracle text); preserved here.
         "chains_seeded_at": existing.get("chains_seeded_at"),
@@ -470,5 +480,6 @@ def format_dossier_summary(dossier: Dict[str, Any]) -> str:
     lines += ["", "Pool limits (probe results — see census_caveat; 0-match proves nothing):"]
     lines += [f"  - {lim}" for lim in dossier["pool_limits"]]
     seeded = dossier.get("chains_seeded_at") or "never"
-    lines += ["", f"Interaction chains authored: {len(dossier['interaction_chains'])} (seeded: {seeded})"]
+    lines += ["", f"Interaction chains authored: {len(dossier['interaction_chains'])} "
+                  f"(seeded: {seeded}; a floor, not coverage — see chains_caveat)"]
     return "\n".join(lines)

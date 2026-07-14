@@ -70,6 +70,8 @@ State the mechanism and the count. The conclusion belongs to whoever owns a list
 
 **The census caveat is part of the dossier and it binds you too:** every `pool_limits` entry is a regex probe result. A probe that matched 0 cards proves nothing — no-match is not does-not-exist. Never treat a 0-match line as a hard constraint; verify against oracle text before relying on it.
 
+**The chains caveat is its authored-layer twin:** `interaction_chains` is a known-incomplete list. A chain proves an engine exists; the absence of a chain proves nothing. Derive compositions from oracle text first — the chain list is a floor under what the cube contains, never a ceiling.
+
 **Pre-spawn self-check (mandatory).** Before every spawn, diff your prompt against the template. If any character outside a `{{PLACEHOLDER}}` differs, discard and rebuild. Then echo to the user only the placeholder table you substituted:
 
 ```
@@ -302,6 +304,8 @@ Produce an **Environment Characterization** sentence for the *user* from the dos
 **Seed pass — run when `chains_seeded_at` is null (a fresh or never-seeded dossier).** Work through the cube's oracle text systematically, archetype family by archetype family — mana engines (untappers, multipliers, cost reducers, free spells), graveyard loops, sacrifice/death-trigger loops, type-changers, tokens, spells-matter, tribal payoffs, lands-matter — and author a chain for **every engine you find**, not just the ones near the current pipeline candidates. This is deliberately broader than one deck's needs: the seed pass runs once per cube and every future session inherits it. When done, set `chains_seeded_at` to the current ISO 8601 UTC timestamp in `dossier.json`.
 
 **Incremental pass — every session:** read the oracle text of cards in and around the candidate pipelines; author any chain the seed pass missed.
+
+**The chain list is a floor, never a ceiling** (`dossier.chains_caveat`). A pipeline is not thinner for lacking a chain, and a shortlist `thesis` must never require a chain to exist — an engine you derive from oracle text during discovery is exactly as real as a seeded one. Queue it for the Phase 12 write-back and use it now.
 
 Chain format:
 
@@ -674,7 +678,9 @@ existed, containing no verdict about any card. Use `dossier.mana_infrastructure`
 `dossier.threat_profile` and `cube_index` as evidence. It is evidence, not authority — every claim in
 it is checkable against `legal_pool` oracle text, and one that does not reproduce should be rejected
 and reported. Read `dossier.census_caveat` and honour it: a census probe that matched 0 cards proves
-nothing about the pool. Never derive a constraint from a 0-match.
+nothing about the pool. Never derive a constraint from a 0-match. Read `dossier.chains_caveat` and
+honour it the same way: a chain is evidence an engine exists; the absence of a chain is evidence of
+nothing. The chain list caps nothing you may find in oracle text yourself.
 
 You are the sole verifier for all hard checks. Work the list in order:
 
@@ -690,12 +696,17 @@ You are the sole verifier for all hard checks. Work the list in order:
     role turns on how many other cards qualify — a count against this deck's list with numerator
     and denominator. A card whose oracle text does not support its assigned role goes on an
     INDEFENSIBLE list. This pass is exhaustive precisely so a bad card cannot hide by being boring.
-6.  Absence audit — scan `legal_pool` for cards NOT in the deck whose oracle text composes with the
-    deck's pipeline, with cards already in the deck, or with a `dossier.interaction_chains` entry
-    involving deck cards. Name the strongest absences (up to 8). For each: quote the oracle
-    mechanism and state, as a count against this deck's list, what it would do here. You are asking
-    one question: is there a card in this pool that this deck should be running and is not?
-    Reporting an absence is a finding; deciding about it is not your call.
+6.  Absence audit — ORACLE TEXT FIRST. Scan `legal_pool` for cards NOT in the deck whose oracle
+    text composes with the deck's pipeline or with cards already in the deck, deriving each
+    composition from the oracle text itself. Only after that scan, cross-check
+    `dossier.interaction_chains` for anything you missed — the chain list is a floor, not a
+    ceiling, and an engine no chain records is still an engine. Name the strongest absences (up
+    to 8). For each: quote the oracle mechanism and state, as a count against this deck's list,
+    what it would do here. You are asking one question: is there a card in this pool that this
+    deck should be running and is not? Reporting an absence is a finding; deciding about it is
+    not your call. Additionally, any engine you derived whose composition appears in NO
+    `dossier.interaction_chains` entry goes under a separate heading `UNCAPTURED CHAIN CANDIDATES`
+    — mechanism and oracle quotes only, no evaluation words, whether or not the deck should run it.
 7.  Better alternatives — is there a card in `legal_pool` that fills an occupied slot more
     efficiently? Check `taxonomic_profile` and `oracle_text` from the bundle.
 8.  Proportional validation — check `build_output.slot_allocation` against accepted deckbuilding
@@ -735,7 +746,8 @@ finding, it does not go in your ranked list, and nothing in this run will act on
 
 Output, in order: your ranked findings (most-severe first — name the card, the problem, and the
 specific swap from `legal_pool` where one applies), then the INDEFENSIBLE list from (5), then the
-absence audit from (6), then the advisory observation if you recorded one.
+absence audit from (6), then UNCAPTURED CHAIN CANDIDATES from (6) if any, then the advisory
+observation if you recorded one.
 
 END PROMPT
 ```
@@ -755,6 +767,7 @@ You built this deck; you judge the findings — for THIS deck, that is exactly t
 3. **Soft findings** (a card-swap opinion, an absence, a proportional-band deviation, a role-text quibble) you may accept or reject on the merits. A Challenger can be confidently wrong — verify each claim against oracle text before acting. But an absence finding naming a card whose oracle-grounded count you cannot rebut is a finding you accept.
 4. **Repair the deck yourself.** Apply accepted findings, keep what you can, recount every quantitative verdict whose denominator moved (a verdict you did not recount is a verdict you may not keep), then re-run the Phase 5D validator and the Phase 6 audit on the result. Update the affected `sweep.json` entries if a repair changes a verdict (the sweep must describe this deck as built).
 5. The Challenger's `COLOR ALLOCATION OBSERVATION`, if present, is lifted out and surfaced to the user in Phase 10. Colours are locked; nothing in this run acts on it.
+6. The Challenger's `UNCAPTURED CHAIN CANDIDATES`, if present, are queued for the Phase 12 session-end write-back — they are cube facts, and holding them until session end preserves the freeze. They are not findings about this deck and require no grill action (though a candidate may coincide with an absence finding, which is adjudicated on its own merits in step 3).
 
 **Grill rounds: one by default.** Spawn a second Challenger (fresh agent, re-hashed bundle) **only** if the first round produced a *hard* finding, so the repair itself gets checked. A soft finding does not buy a second round. **Max 2 rounds** in any case.
 
@@ -1014,7 +1027,7 @@ Saved:
 
 Runs **only** when the user indicates the session is done (no more decks) — never between decks.
 
-While building, you may have discovered a cube fact no chain records — an engine, a type-change interaction, a mana loop. Queue such discoveries mentally (or in your run directory) as candidates; at session end:
+Candidates come from two sources: cube facts you discovered while building that no chain records — an engine, a type-change interaction, a mana loop — and every `UNCAPTURED CHAIN CANDIDATES` entry the Challengers reported during the session's grills. Queue both in your run directory as you go; at session end:
 
 1. For each candidate, re-derive it from oracle text alone. It must satisfy the admissibility rule: mechanism + oracle quotes, no evaluation words, no reference to any deck. If you cannot state it as "A's text says X, B's text says Y, therefore Z is legal", it does not go in.
 2. Append the qualifying chains to `dossier.interaction_chains` in `cubes/<slug>/dossier.json` (leave `chains_seeded_at` untouched — it records the seed pass).
