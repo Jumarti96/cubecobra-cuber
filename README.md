@@ -301,7 +301,7 @@ Discovers every viable draft archetype in a cube — deeply-supported core strat
 
 ### `/build-deck <id>`
 
-Builds a deck from your cube in any supported format. Uses a discovery-first approach: the skill finds viable win conditions in the pool before any strategy is declared, presents a shortlist of 3–5 pipelines, lets you pick or override, then assembles the deck with proportionally-reasoned slot allocations. A two-agent self-grill gate runs before the final list is shown.
+Builds a deck from your cube in any supported format. Uses a discovery-first approach: the skill finds viable win conditions in the pool before any strategy is declared, presents a shortlist of 3–5 pipelines, lets you pick or override, then assembles the deck with proportionally-reasoned slot allocations. An independent cold-Challenger grill gate runs before the final list is shown.
 
 **Supported formats:**
 - **40-card draft** — standard cube draft deck (default sideboard: 8)
@@ -310,29 +310,30 @@ Builds a deck from your cube in any supported format. Uses a discovery-first app
 - **Commander-100** — classic 100-card EDH
 
 **Phase flow:**
-- **Phase 0 — Card Pool Definition:** Creates `_workspace/` and clears temp scripts from the previous run, then optionally restricts the pool (copy limits per rarity, specific card exclusions). The skill infers a `card_pool_rules` object from natural language and confirms before proceeding.
+- **Phase 0 — Card Pool Definition:** Mints a collision-safe run token and creates this run's private `_workspace/<run-token>/` directory (concurrent runs can never touch each other's files), then optionally restricts the pool (copy limits per rarity, specific card exclusions). The skill infers a `card_pool_rules` object from natural language and confirms before proceeding.
 - **Phase 1 — Interview:** Cube, format, optional color preference, intent (Competitive / Experimental / Fun / Specific Constraint), power level.
 - **Phase 2 — Discovery:** Builds/loads the **cube dossier** (`cuber dossier <id>`), then finds Payoff candidates via `taxonomic_profile.structural_roles`, validates each against Enabler/Fodder and Engine/Outlet counts per `synergy_clusters`, and produces a viable pipeline shortlist. Also authors the dossier's `interaction_chains` — oracle-grounded card combinations that tags alone cannot express ("card A changes card B's type so card C can eat it").
 - **Phase 3 — Strategy Selection:** Shows the shortlist with a recommendation based on your intent. You accept, pick another, or describe your own constraint.
 - **Phase 4 — Commander Selection** (commander formats only): finds valid commanders, handles partners.
-- **Phase 5 — Deck Build:** An independent, cold-context **Builder agent** assembles the deck from a hashed JSON bundle. All slot allocations are expressed as proportions of deck size N, with rationale for each. Mana sources are derived from pip demand.
-- **Phases 6–9:** Mana audit, sideboard, pre-grill check, self-grill (parallel Proposer + Challenger agents — proportional reasoning is validated alongside cube membership and oracle text). One grill round by default; a second only on a hard finding.
+- **Phase 5 — Deck Build:** The orchestrator builds the deck — after a mandatory **Fresh-Eyes Sweep** in which every card in the deck's legal pool gets a recorded, fresh verdict scoped to *this* deck (saved as `sweep.json`; this is what prevents a card rejected for a previous deck from being silently skipped). All slot allocations are expressed as proportions of deck size N, with rationale for each. Mana sources are derived from pip demand, and a deterministic pre-flight validator runs before the grill.
+- **Phases 6–9:** Mana audit, sideboard, grill bundle, self-grill: a single cold-context **Challenger agent** audits the deck from a hashed bundle — hard legality checks, an exhaustive per-card oracle defense (INDEFENSIBLE list), quantitative-verdict recounts, and an **absence audit** ("what strong pool card is missing?") from a context that has never seen another deck. The orchestrator adjudicates findings; legality violations, audit regressions, and counts that fail to reproduce are non-negotiable. One grill round by default; a second only on a hard finding.
 - **Re-evaluation:** If the self-grill challenger declares a pipeline fundamentally broken, the skill automatically tries the next pipeline from the Phase 3 shortlist without restarting discovery. A *colour-allocation* observation, by contrast, is advisory only — the deck is always built in the colours you locked.
 
-**Isolation model — what crosses between decks, and what never does.** Deck-building agents start
-informed about the **cube** and ignorant of every other **deck**:
+**Isolation model — what crosses between decks, and what never does.** The orchestrator builds warm
+(it knows the cube); decks stay isolated by three guards, not by a cold builder:
 
-| Knowledge | Scope | Crosses? |
+| Knowledge | Scope | Crosses between decks? |
 |---|---|---|
 | Cube facts, interaction chains, pool limits | the cube | **Yes** — via the dossier |
-| Card-quality verdicts | the (card, list) pair | **Never** — only the agent that owns the list may form one |
-| Orchestrator conclusions | opinion | **Never** |
+| Card-quality verdicts | the (card, list) pair | **Never** — the Fresh-Eyes Sweep forces every legal-pool card to be re-evaluated fresh per deck |
+| Grill findings, repair lessons, build narratives | one deck's run | **Never** — and the analysis firewall keeps them out of the output |
 
-The dossier is frozen *before the first deck is built*, so it is structurally incapable of carrying a
-finding about any deck, and every deck in a session embeds the same `dossier_sha256`. That is what
-lets you build four decks in one session without deck 2 inheriting deck 1's conclusions — a cost
-reducer correctly cut from a deck whose kill is an activated ability must be **re-evaluated from
-scratch** for the next deck, where it may discount most of the list.
+The dossier is frozen *before the first deck is built* (new interaction chains are written back only
+at session end), so it is structurally incapable of carrying a finding about any deck, and every deck
+in a session embeds the same `dossier_sha256`. Together with the sweep and the cold Challenger's
+absence audit, that is what lets you build many decks in one session without deck 2 inheriting deck
+1's conclusions — a cost reducer correctly cut from a deck whose kill is an activated ability must be
+**re-evaluated from scratch** for the next deck, where it may discount most of the list.
 
 **Example:** `/build-deck obc` → "40-card, Competitive intent, surprise me on colors"
 
