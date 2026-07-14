@@ -410,11 +410,13 @@ For each candidate, check whether it qualifies as a splash:
 - Its `color_identity` contains exactly 1 color not in `core_colors`
 - No more than 3 cards of that off-color are being considered
 
-If qualified candidates exist, note them and set `splash_colors` to the list of off-color letters (e.g., `["R"]`). Otherwise set `splash_colors = []`.
+If qualified candidates exist, set `splash_colors` to the list of off-color letters (e.g., `["R"]`) **and record the qualifying card names as `splash_candidates`** — a bounded list, at most 3 names per splash color. Otherwise set `splash_colors = []` and `splash_candidates = []`.
 
 Do not present this evaluation to the user or ask for confirmation. Both criteria above are deterministic — this is a filter, not a judgment.
 
-`core_colors` and `splash_colors` are carried forward as the machine-readable arrays of the same name in `build_input.json` (Phase 5A) and as arguments to `deck_audit.mana_audit()` (Phase 6).
+`core_colors`, `splash_colors` and `splash_candidates` are carried forward as machine-readable arrays of the same name in `build_input.json` (Phase 5A); `core_colors` and `splash_colors` are also arguments to `deck_audit.mana_audit()` (Phase 6).
+
+**`splash_candidates` is what bounds `legal_pool`.** A splash colour never admits its whole colour into the bundle — only these named cards. Ignoring this ships ~100 unusable cards per splash colour, since only 3 of them can ever be legally included.
 
 ---
 
@@ -453,6 +455,7 @@ Create `_workspace/<run-token>/attempt-<k>/` (k = 1 on the first build). Write `
   "power_level": "unpowered",
   "core_colors": ["U", "R"],
   "splash_colors": [],
+  "splash_candidates": [],
   "commander": null,
   "card_pool_rules": { "base": "cube_mainboard", "multipliers": {}, "only_from": {}, "excluded": [] },
   "pipeline": {
@@ -492,11 +495,19 @@ Do **not** ship the whole pool to every agent. Full oracle text is only needed f
 
 | Key | Contents | Why it exists |
 |-----|----------|---------------|
-| `legal_pool` | **Full records incl. `oracle_text`** for every card with `color_identity ⊆ core_colors ∪ splash_colors`, plus all lands and all colourless cards | Every include, every oracle citation, every swap suggestion must come from here |
-| `cube_index` | **Every card in the cube**: `name`, `colors`, `color_identity`, `cmc`, `type_line`, `rarity`, `tags`, `taxonomic_profile` — **no `oracle_text`** | What the *opponent* can do; spotting a dead colour. Cheap. |
+| `legal_pool` | **Full records incl. `oracle_text`** for: every card with `color_identity ⊆ core_colors`, **plus** all lands, **plus** all colourless cards, **plus** the bounded `splash_candidates` list from Phase 3 — and nothing else | Every include, every oracle citation, every swap suggestion must come from here |
+| `cube_index` | The **disjoint complement** of `legal_pool` — every cube card *not* in it. Fields: `name`, `colors`, `color_identity`, `cmc`, `type_line`, `rarity`, `tags`. **No `oracle_text`, no `taxonomic_profile`** | What the *opponent* can do; spotting a dead colour. Cheap. |
 | `dossier` | The frozen Phase-2 dossier, verbatim | Mana infrastructure, interaction chains, structural censuses, threat profile, pool limits |
 
+**`legal_pool` and `cube_index` are disjoint, and their union is the whole cube.** Never ship a card in both — that duplication once made a 4-colour bundle 78% *larger* than shipping the raw pool.
+
+**Splash colours do NOT admit a whole colour.** A splash permits **at most 3 cards per splash colour** (Phase 5C check 6). Admitting every card of a splash colour into `legal_pool` ships ~100 cards the Builder may never legally use. Ship only the bounded `splash_candidates` list that Phase 3's Splash Evaluation already produced. If Phase 3 produced no candidates, `splash_colors` is empty and nothing is added.
+
+**`tags` already flattens `taxonomic_profile`** (it is the concatenation of `synergy_clusters`, `structural_roles` and `mechanical_functions`). Shipping both in `cube_index` doubles it for nothing. `legal_pool` keeps `taxonomic_profile` because agents reason over the structured roles.
+
 **Never filter to on-colour cards alone.** A sideboard is built against the *rest of the cube*: "there is no artifact removal in mono-red — every answer in this cube is W/G/multicolour" is a fact you can only see with the whole cube in view. `cube_index` + `dossier.threat_profile` is what makes that possible without paying for 271 oracle texts.
+
+**Sanity-check the bundle before you hash it.** If `len(legal_pool) + len(cube_index) != len(working_pool)`, the tiers overlap or drop cards — fix it before spawning anything.
 
 **Field discipline (binding).** Every field is exactly one of:
 (a) a verbatim user answer from Phase 0/1, (b) a name / count / array machine-derived from the pool, (c) a table or rule printed verbatim in this skill file, or (d) the frozen dossier, which was written before any deck existed and satisfies the admissibility rule in IRON RULE 2.
