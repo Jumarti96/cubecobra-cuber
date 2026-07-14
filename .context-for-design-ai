@@ -39,26 +39,16 @@ Each cube lives under `cubes/<slug>/`:
 `enters_tapped` / `conditionally_tapped` / `self_bounce` land flags, and per-pair dual counts where
 `free` excludes self-bouncing Lairs), structural censuses (rituals, cost reducers, sacrifice outlets
 with a `free` flag, tutors, sweepers, haste granters, graveyard hate), tribal rosters, a threat
-profile (what the cube's *other* decks do — this is what a sideboard is built against), and
+profile (what the cube's *other* decks do — this is what a sideboard is built against), and hard
 `pool_limits`. It is cached at `cubes/<slug>/dossier.json` and invalidated by `(card_count,
-fetched_at)` from `meta.json` plus a `dossier_version` constant (bump it whenever census semantics
-change — stale caches are discarded, authored chains survive).
-
-**The census proves presence, never absence.** Every `pool_limits` entry is a regex probe result:
-positive findings name cards; a 0-match finding says only that the probe matched nothing, and the
-top-level `census_caveat` tells every consumer that no-match ≠ doesn't-exist. Never phrase a limit
-as "X is impossible" — a probe once reported "0 rituals" and agents concluded storm could not be
-accelerated while High Tide and three untap-lands spells sat in the pool, invisible to the probe.
+fetched_at)` from `meta.json`.
 
 The census is copy-count agnostic — pool rules (multipliers, exclusions) vary per run, so the dossier
 describes the cube itself and leaves copy math to callers.
 
-`interaction_chains` is the one section no script can produce. A **seed pass** (recorded in
-`chains_seeded_at`) authors chains for every engine in the cube when the dossier is first built;
-`/build-deck` Phase 2 adds any it missed, and newly discovered engines are written back **at session
-end only** (never mid-session — the dossier is frozen before deck 1). Chains are **preserved across
-`--rebuild`**. They state how cards compose, quoting oracle text — e.g. "A's text says X, B's says
-Y, therefore Z is legal". They never rank a card.
+`interaction_chains` is the one section no script can produce. It is authored during `/build-deck`
+Phase 2 and **preserved across `--rebuild`**. Chains state how cards compose, quoting oracle text —
+e.g. "A's text says X, B's says Y, therefore Z is legal". They never rank a card.
 
 **The invariant that matters:** the dossier carries *facts*, never *verdicts*. A card-quality verdict
 is a property of the pair (card, list), not of the card — so it may only be formed by the agent that

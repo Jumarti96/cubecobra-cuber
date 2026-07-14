@@ -41,6 +41,9 @@ Thumbs.db
 # OpenSpec planning workspace (local only)
 openspec/
 
+# Superpowers design specs (local planning artifacts, not committed)
+docs/superpowers/
+
 # Temp scripts written by build-deck during a run (gitignored for all users)
 _workspace/
 
