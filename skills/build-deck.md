@@ -92,6 +92,8 @@ No card is good or bad in isolation. Any claim that a card is weak, strong, a tr
 
 A numerator and a denominator are both required, and the denominator is always **this** deck's list. If the list changes, the count is stale and MUST be recomputed.
 
+**The count lives in exactly one place — a `quantitative_verdicts` entry — and it is computed, not typed.** The numerator and denominator are return values of `cuber.deck_counts` (Phase 5C step 6), and Phase 5D recomputes them from the same code. The VALID example above states the count in prose for readability *here*; in the actual build that count is the verdict's `numerator`/`denominator` (18 / 24 with a `generic_reducible` spec), and the `claim`, the card's `role`, and the sweep `reason` name the mechanism in words with **no count digits**. One computed copy of every number means no copy can go stale.
+
 This binds every card whose value is a function of how many other cards qualify: cost reducers, tribal and type-matters payoffs, storm and spell-count triggers, graveyard counts, devotion, threshold, metalcraft, delirium, domain, affinity.
 
 ---
@@ -323,6 +325,7 @@ Rules, and they are strict:
 - `mechanism` **quotes oracle text** and states only how the cards compose. It is a claim that is true or false independent of any deck.
 - **No evaluation words.** Not "strong", "the key combo", "worth building around", "a trap". See the admissibility rule in IRON RULE 2.
 - Add chains, never verdicts. If you cannot express it as "A's text says X, B's text says Y, therefore Z is legal", it does not belong.
+- **`color_identity` is the minimum identity required to execute the CORE mechanism** — the cards without which the chain does not function — not the union of every card named. A redundant or alternative card in another colour (a second sacrifice outlet, an optional enabler, a fund-the-cost helper) is listed in `cards` and described in `mechanism` as optional, but it **must not widen** `color_identity`. Worked example: the `goblin-death-to-damage` chain runs on Pashalik Mons + Skirk Prospector + Mogg War Marshal, all mono-red, so its identity is `["R"]`; Goblin Turncoat is a black *alternative* outlet and does not make the chain `["B","R"]`. Widening the identity hides the engine from every deck in the narrower colours — exactly the deck the chain most helps.
 
 Then **freeze the dossier**: re-save it and compute its SHA-256. From here to the end of the session it is immutable. Every deck embeds this same `dossier_sha256`. You do not amend it after a deck is built — new chains discovered while building are queued for the Phase 12 session-end write-back, never added mid-session.
 
@@ -490,7 +493,8 @@ Sweep rules:
 1. **Coverage is total.** Every `legal_pool` name appears exactly once. Verified mechanically in 5D.
 2. **Reasons are fresh.** Each reason must be derivable from this deck's bundle alone — this card's oracle text, this pipeline's thesis, this list's shape. Never "as before", never "see deck N", never a conclusion you formed while building another deck. If you notice you are about to write a remembered verdict, stop and re-derive it; if it does not reproduce against this pipeline, it was never true here.
 3. **Lands and colourless cards are swept too.** A one-clause reason is fine ("no U/R identity, this deck has no use for W sources" → EXCLUDE_OFFPLAN).
-4. Write the result to `_workspace/<run-token>/attempt-<k>/sweep.json`:
+4. **Reasons carry no count-over-the-list digits.** A `reason` states the mechanism qualitatively ("this deck runs no Goblins", "only cycling cards trigger it and this list has none") — never "0 Goblins", "8 of 24", "2 Island-typed". A count that is load-bearing to a rejection belongs in a `quantitative_verdicts` entry (spec-backed, recomputed in 5D), not in prose. Intrinsic card numbers ({R}{R}, "4 damage", "2 extra turns") are not counts-over-the-list and are fine. The same rule binds every `role` string in the mainboard/sideboard. This is verified mechanically in 5D check 8.
+5. Write the result to `_workspace/<run-token>/attempt-<k>/sweep.json`:
 
 ```json
 {
@@ -539,13 +543,25 @@ Read `dossier.mana_infrastructure` before choosing the mana base — `enters_tap
 
 **5. FILL.** For every card: quote `oracle_text` from `legal_pool` before including it; verify against `card_pool_rules`; build a running restrictions checklist.
 
-**6. QUANTITATIVE VERDICTS (IRON RULE 3).** Every count-dependent inclusion or rejection is recorded:
+**6. QUANTITATIVE VERDICTS (IRON RULE 3).** Every count-dependent inclusion or rejection is recorded — and **a count is computed by `cuber.deck_counts`, never typed by hand**. Each verdict carries the integer AND the recipe that produced it:
 
 ```json
-{ "card": "…", "claim": "…", "numerator": 16, "denominator": 24, "verdict": "INCLUDE" }
+{
+  "card": "Helm of Awakening",
+  "claim": "discounts every nonland card with a generic component in its cost",
+  "numerator": 18, "numerator_spec": { "predicate": "generic_reducible", "args": [["Helm of Awakening"]] },
+  "denominator": 25, "denominator_spec": { "predicate": "nonland", "offset": -1 },
+  "verdict": "INCLUDE"
+}
 ```
 
-If you later swap a card and the denominator moves, RECOUNT.
+- `numerator` / `denominator` are the return values of `deck_counts.resolve(deck, spec)` on **this deck's mainboard array** — compute them, do not transcribe them.
+- `numerator_spec` / `denominator_spec` are the machine-readable recipes. A spec is `{ "predicate": <name>, "args": [...], "offset": <int> }`, or a bare int for a fixed literal (e.g. a target deck size). `offset` expresses a relative count such as `nonland - 1` (cards other than this one). Predicates: `nonland`, `lands`, `zero_cost`, `instants_sorceries`, `subtype_count(sub)`, `type_typed_lands(land_type)`, `generic_reducible(exclude_names)`, `color_cards(color)`, `pip_sum(color)`, `pip_sources(color)`, `oracle_matches(regex)`. Add a predicate to `cuber/deck_counts.py` if you need one that does not exist — never inline a bespoke recount.
+- `claim` **names the predicate in words, with no count digits** (write "discounts every nonland card with a generic component", not "discounts 17 of 25"). The number lives only in the machine-checked `numerator`/`denominator`. This is what makes the count un-stale-able: there is exactly one copy of it, and Phase 5D recomputes it from the spec.
+
+If you later swap a card and a denominator moves, the spec still recomputes correctly — re-run `deck_counts` and update the stored integers; never leave a transcribed number behind.
+
+**The `*_spec` fields are builder-internal — strip them from the grill bundle (Phase 8).** The Challenger recounts every verdict independently against the deck array (its check 13); handing it the recipe would let it re-run your code instead of verifying you, defeating the cold check. Ship only `card`/`claim`/`numerator`/`denominator`/`verdict` to the Challenger; keep the specs in `build_output.json` on disk for the Phase 5D validator.
 
 **7. Record your derivation** as `build_output` (this feeds the grill bundle and Phase 10):
 `macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `slot_allocation`, `land_math`, `pip_math`, `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `quantitative_verdicts`, `restrictions_checklist`.
@@ -559,10 +575,13 @@ Write `_workspace/<run-token>/attempt-<k>/_tmp_validate_build.py` and run these 
 3. Copy counts obey `card_pool_rules` — cross-check with `cube_search.get_max_copies`.
 4. Every nonland `color_identity` ⊆ `core_colors` ∪ `splash_colors` (or the commander's identity).
 5. ≤ 3 cards for each splash color.
-6. Every entry in `quantitative_verdicts` — recompute `numerator` and `denominator` against the actual mainboard array; flag any that does not reproduce.
+6. Quantitative verdicts reproduce — call `deck_counts.check_verdicts(mainboard, quantitative_verdicts)`; it recomputes every `numerator`/`denominator` from its `*_spec` and returns the mismatches. A non-empty result fails the check. This is the **same `cuber.deck_counts` code the build used**, so a passing check means the stored integer and its recipe agree by construction — not two hand-written recounts that might both be wrong.
 7. Sweep coverage — every `legal_pool` name appears exactly once in `sweep.json`; `legal_pool_count` matches.
+8. No ratio counts in prose — for every mainboard/sideboard `role`, every `sweep.json` `reason`, and every verdict `claim`, `deck_counts.count_digits_in_prose(text)` returns empty. A ratio frame ("17 of the 25", "8 Island-typed", "out of 16 lands") means a number was hand-typed where a spec-backed verdict belongs — promote it to a `quantitative_verdicts` entry or reword qualitatively. Intrinsic card numbers ({R}{R}, "4 damage", "creates 10 Goblins") are not flagged; the guard catches ratio prose, and check 6 is the primary guarantee for every load-bearing count.
 
 Fix any failure directly (you built the deck; you repair it), then **re-run the validator until all checks pass**. Do not proceed to Phase 6 with a failing check, and never hand-patch a validator to make it agree.
+
+Both new checks import the shared module: `from cuber import deck_counts`. The build script and this validator therefore run identical counting logic — the guarantee is that they cannot disagree, so a stale count can never reach the grill.
 
 ---
 
@@ -1058,7 +1077,8 @@ Candidates come from two sources: cube facts you discovered while building that 
 | Pool tiers | `_workspace/<run-token>/attempt-<k>/pool_tiers.json` — `legal_pool` + `cube_index`, disjoint, precomputed `pips`/`has_generic`/`subtypes` |
 | **Fresh-Eyes Sweep** | `_workspace/<run-token>/attempt-<k>/sweep.json` — every `legal_pool` card, exactly once, fresh reasons only |
 | Pre-flight validation | `_workspace/<run-token>/attempt-<k>/_tmp_validate_build.py` — deterministic checks only |
-| Grill input bundle | `_workspace/<run-token>/attempt-<k>/grill_input.json` — hashed; the sweep is deliberately excluded |
+| **Compute / recount any count** | `cuber.deck_counts` — `resolve(deck, spec)` for a verdict number, `check_verdicts(deck, verdicts)` for the 5D recount, `count_digits_in_prose(text)` for the 5D prose guard. The ONE place counts are computed; both the build and the validator call it |
+| Grill input bundle | `_workspace/<run-token>/attempt-<k>/grill_input.json` — hashed; the sweep is deliberately excluded; verdict `*_spec` fields are stripped |
 | **Spawn the Challenger** | Copy TEMPLATE D verbatim. Substitute declared `{{PLACEHOLDER}}` values only. Never author prompt text. See IRON RULE 2 |
 | Grill resolution record | `_workspace/<run-token>/attempt-<k>/grill_resolution.json` — every finding, ACCEPT/REJECT, oracle-grounded reason |
 | Validate analysis.md | `_workspace/<run-token>/attempt-<k>/_tmp_validate_analysis.py` — header counts, zero scryfall, firewall check, generation check |

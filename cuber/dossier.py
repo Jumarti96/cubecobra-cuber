@@ -26,7 +26,7 @@ DOSSIER_FILENAME = "dossier.json"
 
 # Bump whenever census semantics change: a cached dossier built under older semantics
 # is invalid even if the cube itself has not changed (load_dossier discards it).
-DOSSIER_VERSION = 3
+DOSSIER_VERSION = 4
 
 # A regex census can prove presence. It cannot prove absence. Every consumer of this
 # file must read pool_limits through this caveat.
@@ -82,6 +82,26 @@ _ENCHANTMENT_ANSWER_RE = re.compile(
 )
 
 _MANA_SYMBOL_RE = re.compile(r"\{([^}]+)\}")
+
+# `produces` (which colours a land can make) must capture alternation: "Add {U} or {R}" and
+# "Add {U}, {B}, or {R}" list every option. This is deliberately different from _mana_added, which
+# measures the AMOUNT of a single tap (a dual adds one mana, not two) and so must stay narrow.
+# The clause span stops at the first sentence break so "Add {C}. {2}, {T}, Sacrifice..." reads {C}
+# only. Known gap: "Add one mana of any color" (Gemstone Mine) carries no symbol and yields [].
+_ADD_CLAUSE_RE = re.compile(r"Add ([^.\n;]*)", re.IGNORECASE)
+_MANA_COLOR_RE = re.compile(r"\{([WUBRGC])\}")
+
+
+def land_colors(oracle: str) -> List[str]:
+    """Colours a land can add, in WUBRG(+C) order. Captures 'or'/comma alternation.
+
+    Public and shared: `cuber.deck_counts.pip_sources` counts a deck's mana sources through this
+    same function, so the census and the deck-count validator agree by construction.
+    """
+    colors = set()
+    for clause in _ADD_CLAUSE_RE.finditer(oracle):
+        colors.update(_MANA_COLOR_RE.findall(clause.group(1)))
+    return [c for c in "WUBRGC" if c in colors]
 
 
 def _text(card: Card) -> str:
@@ -187,9 +207,7 @@ def _mana_infrastructure(cards: List[Card]) -> Dict[str, Any]:
             # A Lair returns a land to hand to stay — it swaps a land rather than adding one,
             # so it does not raise your battlefield land count.
             "self_bounce": bool(_SELF_BOUNCE_LAND_RE.search(oracle)),
-            "produces": sorted(set(_MANA_SYMBOL_RE.findall(
-                " ".join(m.group(1) for m in _ADD_MANA_RE.finditer(oracle))
-            ))),
+            "produces": land_colors(oracle),
         })
 
     # Dual availability per colour pair — the fixing question, stated as counts only.
