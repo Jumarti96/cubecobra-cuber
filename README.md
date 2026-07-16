@@ -58,8 +58,11 @@ cp .env.example .env
 
 # 5. Install Claude Code skills
 python scripts/install_skills.py
-# Copies skills/*.md into .claude/skills/ where Claude Code reads them.
-# Re-run this any time you edit a skill or pull updates.
+# Copies skills into .claude/skills/ where Claude Code reads them.
+# Two layouts are supported: a flat skills/<name>.md, or a folder
+# skills/<name>/ containing SKILL.md plus a references/ directory for
+# material the skill loads at point of use (build-deck uses the folder
+# layout). Re-run this any time you edit a skill or pull updates.
 ```
 
 **Optional: install as a command**
