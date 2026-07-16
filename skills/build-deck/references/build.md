@@ -117,7 +117,7 @@ report = deck_checks.run_structural_checks(
     mainboard_cards,            # one dict per copy (expand qty)
     macro_archetype,            # from Phase 5C step 1
     thesis_turn,                # from the locked pipeline's thesis
-    role_counts,                # {"payoff": n, "enabler": m} — functional copies in the mainboard
+    role_counts,                # {"payoff": n | [copy entries], "enabler": ...} — functional copies, reliability-weighted
     coverage_declaration,       # see below
     threat_profile=dossier["threat_profile"],
     seed=0,
@@ -126,4 +126,6 @@ report = deck_checks.run_structural_checks(
 
 Display `deck_checks.format_checks_report(report)`.
 
-**Inputs you assemble first:** `role_counts` counts the mainboard cards whose assigned role is a pipeline payoff or enabler (functional copies, qty-expanded). `coverage_declaration` maps each of the five threat classes — `wide_boards`, `single_large_threat`, `noncreature_permanents`, `stack`, `graveyard` — to either `{"cards": [<mainboard names>]}` or `{"conceded": "<one-line mechanism reason>"}`. A concession is legitimate (a fast enough clock answers everything) but it must be written; the cheapest lie is the class you never mention.
+**Inputs you assemble first:** `role_counts` counts the mainboard cards whose assigned role is a pipeline payoff or enabler (functional copies, qty-expanded). A value is either a plain int (every copy fully reliable) or a per-copy list mixing `{"qty": k}` entries with weighted ones: `{"card": "<name>", "weight": 0.8, "why": "<mechanism>"}`.
+
+**Reliability weights are mandatory for conditional copies — effects in general, not just tutors.** A functional copy whose access or effect is conditional may not count as a full copy: a tutor whose cost can eat the fetched piece, a cast-from-hand-only trigger, an effect that needs another piece already on the battlefield, a symmetric effect the opponent can exploit first. Declare it at a weight below one with a one-line mechanism-grounded `why` — `assembly_check` raises on a discount without one. The weight is a builder claim, stated conservatively from oracle text; it ships inside `build_output.structural_checks`, where the Challenger's derivation audit sees both the number and the stated mechanism. IRON RULE 3's prose rule binds `why` strings: name the mechanism, no ratio-count digits. `coverage_declaration` maps each of the five threat classes — `wide_boards`, `single_large_threat`, `noncreature_permanents`, `stack`, `graveyard` — to either `{"cards": [<mainboard names>]}` or `{"conceded": "<one-line mechanism reason>"}`. A concession is legitimate (a fast enough clock answers everything) but it must be written; the cheapest lie is the class you never mention.

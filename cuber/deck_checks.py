@@ -47,38 +47,101 @@ def _is_land(c: Card) -> bool:
 
 # ── critical-mass math ────────────────────────────────────────────────────────
 
-def p_at_least_one(copies: int, deck_size: int, cards_seen: int) -> float:
+def p_at_least_one(copies: float, deck_size: int, cards_seen: int) -> float:
     """P(≥1 of `copies` functional copies seen in `cards_seen` cards): 1 − (1 − c/N)^n.
 
     The methodology's redundancy table (7 cards = opening hand, ~10 = turn 3,
     ~13 = turn 6) is this formula with cards_seen = 7 + turn, on the draw.
+    `copies` may be fractional: reliability-weighted copies (see `assembly_check`)
+    contribute their weight, so 4 sure copies + one 0.8-reliable copy count as 4.8.
     """
     if copies <= 0 or deck_size <= 0:
         return 0.0
     return 1.0 - (1.0 - copies / deck_size) ** cards_seen
 
 
+def _normalize_role_spec(role: str, spec: Any) -> List[Dict[str, Any]]:
+    """Expand a `role_counts` value into per-copy entries {card?, weight, why?}.
+
+    Accepted forms:
+      - int n                      → n copies at weight 1.0
+      - list of items, each either:
+          float w                  → one copy at weight w
+          dict {card?, qty=1, weight=1.0, why?}   → qty copies at that weight
+
+    A weight discounts a copy whose access or effect is conditional (a tutor whose
+    cost can eat the fetched piece, a cast-from-hand-only trigger, a piece-dependent
+    or symmetric effect). Every weight below 1.0 must carry a non-empty `why` naming
+    the mechanism — a discount without a stated reason is unverifiable.
+    """
+    if isinstance(spec, bool):
+        raise ValueError(f"role '{role}': bool is not a valid copy count")
+    if isinstance(spec, int):
+        if spec < 0:
+            raise ValueError(f"role '{role}': negative copy count {spec}")
+        return [{"weight": 1.0} for _ in range(spec)]
+    if isinstance(spec, (list, tuple)):
+        copies: List[Dict[str, Any]] = []
+        for item in spec:
+            qty = 1
+            if isinstance(item, (int, float)) and not isinstance(item, bool):
+                entry: Dict[str, Any] = {"weight": float(item)}
+            elif isinstance(item, dict):
+                qty = item.get("qty", 1)
+                if not isinstance(qty, int) or isinstance(qty, bool) or qty < 1:
+                    raise ValueError(f"role '{role}': qty must be a positive int, got {qty!r}")
+                entry = {"weight": float(item.get("weight", 1.0))}
+                if item.get("card"):
+                    entry["card"] = item["card"]
+                if item.get("why"):
+                    entry["why"] = item["why"]
+            else:
+                raise ValueError(f"role '{role}': invalid copy entry {item!r}")
+            w = entry["weight"]
+            if not 0.0 < w <= 1.0:
+                raise ValueError(f"role '{role}': weight {w} outside (0, 1]")
+            if w < 1.0 and not (entry.get("why") or "").strip():
+                raise ValueError(
+                    f"role '{role}': weight {w} below 1.0 requires a mechanism-grounded 'why'")
+            copies.extend(dict(entry) for _ in range(qty))
+        return copies
+    raise ValueError(f"role '{role}': expected int or list, got {type(spec).__name__}")
+
+
 def assembly_check(
     deck_size: int,
-    role_counts: Dict[str, int],
+    role_counts: Dict[str, Any],
     thesis_turn: int,
     threshold: float = 0.75,
 ) -> Dict[str, Any]:
     """HARD gate: every engine role must be seen with p ≥ `threshold` by the thesis turn.
 
-    `role_counts` maps role name (e.g. "payoff", "enabler") to its functional-copy count
-    in the deck. cards_seen = 7 + thesis_turn (opening hand plus one draw per turn, on
-    the draw — the convention the methodology's worked table uses).
+    `role_counts` maps role name (e.g. "payoff", "enabler") to its functional copies
+    in the deck: a plain int, or a per-copy list with reliability weights (see
+    `_normalize_role_spec`). Weighted copies contribute their weight to an effective
+    count, so a conditional effect never counts as a full copy. cards_seen =
+    7 + thesis_turn (opening hand plus one draw per turn, on the draw — the
+    convention the methodology's worked table uses).
     """
     cards_seen = 7 + thesis_turn
     roles: Dict[str, Any] = {}
     worst = "PASS"
-    for role, count in role_counts.items():
-        p = p_at_least_one(count, deck_size, cards_seen)
+    for role, spec in role_counts.items():
+        copies = _normalize_role_spec(role, spec)
+        effective = sum(c["weight"] for c in copies)
+        p = p_at_least_one(effective, deck_size, cards_seen)
         status = "PASS" if p >= threshold else "FAIL"
         if status == "FAIL":
             worst = "FAIL"
-        roles[role] = {"count": count, "p": round(p, 4), "status": status}
+        info: Dict[str, Any] = {"count": len(copies), "p": round(p, 4), "status": status}
+        discounts = [c for c in copies if c["weight"] < 1.0]
+        if discounts:
+            info["effective"] = round(effective, 2)
+            info["discounts"] = [
+                {"card": c.get("card", "?"), "weight": c["weight"], "why": c.get("why", "")}
+                for c in discounts
+            ]
+        roles[role] = info
     return {
         "deck_size": deck_size,
         "thesis_turn": thesis_turn,
@@ -341,7 +404,7 @@ def run_structural_checks(
     deck_cards: Sequence[Card],
     macro_archetype: str,
     thesis_turn: int,
-    role_counts: Dict[str, int],
+    role_counts: Dict[str, Any],
     coverage_declaration: Dict[str, Any],
     threat_profile: Optional[Dict[str, Any]] = None,
     n_hands: int = 1000,
@@ -350,7 +413,8 @@ def run_structural_checks(
     """Run all four structural checks and tier the overall status.
 
     FAIL only from the hard gates (assembly, coverage); WARN from the heuristic
-    checks (curve, goldfish); PASS otherwise.
+    checks (curve, goldfish); PASS otherwise. `role_counts` values are plain ints
+    or reliability-weighted copy lists — see `assembly_check`.
     """
     mainboard = list(deck_cards)
     curve = curve_check(mainboard, macro_archetype, thesis_turn=thesis_turn)
@@ -395,8 +459,12 @@ def format_checks_report(report: Dict[str, Any]) -> str:
         f"{assembly['cards_seen']} cards seen):  [{assembly['status']}]"
     )
     for role, info in assembly["roles"].items():
+        copies = f"{info['count']} copies"
+        if "effective" in info:
+            tags = ", ".join(f"{d['card']}@{d['weight']:g}" for d in info["discounts"])
+            copies += f" (effective {info['effective']:g}: {tags})"
         lines.append(
-            f"  {info['status']:4}  {role}: {info['count']} copies → "
+            f"  {info['status']:4}  {role}: {copies} → "
             f"p={info['p']:.2f} (need ≥ {assembly['threshold']:.2f})"
         )
 

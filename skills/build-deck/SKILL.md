@@ -378,7 +378,7 @@ Run the structural checks (the deck-building methodology, mechanized — thresho
 (Invocation snippet and `coverage_declaration` construction are in `references/build.md`.)
 
 **Gate tiers:**
-- **HARD — treat like a mana-audit FAIL:** `assembly` (an engine role's P(seen by thesis turn) < 0.75 — either add functional copies, or the thesis turn was optimistic: revise it and say so) and `coverage` (missing class, phantom card name, empty concession). Repair, recount any moved verdict, re-run 5D + this gate.
+- **HARD — treat like a mana-audit FAIL:** `assembly` (an engine role's P(seen by thesis turn) < 0.75 — either add functional copies, or the thesis turn was optimistic: revise it and say so) and `coverage` (missing class, phantom card name, empty concession). Repair, recount any moved verdict, re-run 5D + this gate. Assembly counts **reliability-weighted** copies: a conditional functional copy is declared at a weight below one with its mechanism (see `references/build.md`), never counted as a full copy.
 - **WARN-tier — respond, don't rebuild:** `curve` and `goldfish`. Each WARN flag gets one line in `build_output.structural_responses` stating the mechanism-grounded reason the deviation is accepted ("the curve tops at 6 because the thesis turn is 6 and both 6-drops are the kill"). IRON RULE 3 binds these lines: no prose ratio counts.
 
 **Also record `build_output.failure_modes`** — one mechanism-grounded line each for **flood** (what do excess lands do here?), **screw** (which hands are keepable on 2 lands?), and **decapitation** (what is the line when the key piece is answered on sight? if the honest answer is "lose", the deck needs protection slots or a second route — say which it has).
