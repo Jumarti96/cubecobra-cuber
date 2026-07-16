@@ -378,6 +378,12 @@ AI features: `cuber tag`, `/tag-cube`, `/build-deck`, `/suggest-cube`, `/set-cub
 
 ---
 
+## Further Reading
+
+- [`docs/deckbuilding-methodology.md`](docs/deckbuilding-methodology.md) — a format-agnostic, phased deck-building pipeline (10 phases with exit gates) for humans building decks by hand. The expert question sequence behind good deck construction: thesis, synergy mapping, structural quotas, environment checks, cut algorithm, and testing protocol.
+
+---
+
 ## Acknowledgements
 
 Skill design patterns — iron rule (oracle text only), self-grill gate, human-readable + JSON sidecar, and the tool selection table convention — are adapted from [dan-blanchard/mtg-skills](https://github.com/dan-blanchard/mtg-skills) (0BSD license). The mana audit formulas (Burgess + Karsten) and commander detection logic are also adapted from that project. Highly recommended as a companion for deck construction and rules questions.
