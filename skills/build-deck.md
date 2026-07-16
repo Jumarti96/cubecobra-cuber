@@ -379,12 +379,16 @@ Select the top 3–5 for the shortlist.
   "fixing_score": "GOOD",
   "thesis": {
     "kill_mechanism": "<the payoff's oracle text, and what converts board state into a win>",
-    "interaction_chain_ids": ["goblin-zombie-deadapult", "..."]
+    "interaction_chain_ids": ["goblin-zombie-deadapult", "..."],
+    "goldfish_turn": 6,
+    "default_role": "combo"
   }
 }
 ```
 
 `support_card_names` is a machine-derived cluster-overlap list and it is **fallible** — it will happily list a card whose oracle text is blank in the chosen colours. It is a starting point, never an instruction. Verify every name against oracle text; rejecting one is a correct outcome, not a failure.
+
+`goldfish_turn` is the earliest realistic turn the kill mechanism executes against no resistance, derived from the mana math of the chain itself (oracle-grounded — never a meta claim). `default_role` is `aggressor` / `controller` / `combo`. Both are testable claims, not flavor: Phase 6b's assembly check and the Challenger's pipeline-viability check test the finished list against them.
 
 `thesis` is what makes two sub-archetypes of the same payoff *distinguishable*. It is oracle-grounded and evaluation-free, exactly like `interaction_chains` — **state the mechanism, never the verdict.** Two shortlist entries whose theses do not name different kill mechanisms or different interaction chains are the same pipeline wearing two names — merge them rather than presenting a false choice.
 
@@ -493,6 +497,7 @@ Sweep rules:
 1. **Coverage is total.** Every `legal_pool` name appears exactly once. Verified mechanically in 5D.
 2. **Reasons are fresh.** Each reason must be derivable from this deck's bundle alone — this card's oracle text, this pipeline's thesis, this list's shape. Never "as before", never "see deck N", never a conclusion you formed while building another deck. If you notice you are about to write a remembered verdict, stop and re-derive it; if it does not reproduce against this pipeline, it was never true here.
 3. **Lands and colourless cards are swept too.** A one-clause reason is fine ("no U/R identity, this deck has no use for W sources" → EXCLUDE_OFFPLAN).
+3b. **Engine cards state their floor.** For any card whose value depends on the engine assembling (payoff or enabler shape), the reason names what the card does when the engine *hasn't* assembled — as a mechanism ("without a sacrifice outlet this is a vanilla 1/1"). "Functions only when already ahead" (win-more shape) is a valid EXCLUDE_CONSIDERED mechanism.
 4. **Reasons carry no count-over-the-list digits.** A `reason` states the mechanism qualitatively ("this deck runs no Goblins", "only cycling cards trigger it and this list has none") — never "0 Goblins", "8 of 24", "2 Island-typed". A count that is load-bearing to a rejection belongs in a `quantitative_verdicts` entry (spec-backed, recomputed in 5D), not in prose. Intrinsic card numbers ({R}{R}, "4 damage", "2 extra turns") are not counts-over-the-list and are fine. The same rule binds every `role` string in the mainboard/sideboard. This is verified mechanically in 5D check 8.
 5. Write the result to `_workspace/<run-token>/attempt-<k>/sweep.json`:
 
@@ -564,7 +569,7 @@ If you later swap a card and a denominator moves, the spec still recomputes corr
 **The `*_spec` fields are builder-internal — strip them from the grill bundle (Phase 8).** The Challenger recounts every verdict independently against the deck array (its check 13); handing it the recipe would let it re-run your code instead of verifying you, defeating the cold check. Ship only `card`/`claim`/`numerator`/`denominator`/`verdict` to the Challenger; keep the specs in `build_output.json` on disk for the Phase 5D validator.
 
 **7. Record your derivation** as `build_output` (this feeds the grill bundle and Phase 10):
-`macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `slot_allocation`, `land_math`, `pip_math`, `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `quantitative_verdicts`, `restrictions_checklist`.
+`macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `thesis_turn` and `default_role` (copied from the locked pipeline's thesis), `slot_allocation`, `land_math`, `pip_math`, `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `quantitative_verdicts`, `restrictions_checklist`. Phase 6b appends `structural_checks`, `structural_responses`, `coverage`, and `failure_modes`.
 
 ### Phase 5D — Pre-flight Validation (deterministic)
 
@@ -606,6 +611,37 @@ Do not show the deck to the user or spawn the grill until the audit is at least 
 
 ---
 
+## Phase 6b: Structural Gate
+
+Run the structural checks (the deck-building methodology, mechanized — thresholds live in `cuber/deck_checks.py`, never re-derive them by hand):
+
+```python
+from cuber import deck_checks
+report = deck_checks.run_structural_checks(
+    mainboard_cards,            # one dict per copy (expand qty)
+    macro_archetype,            # from Phase 5C step 1
+    thesis_turn,                # from the locked pipeline's thesis
+    role_counts,                # {"payoff": n, "enabler": m} — functional copies in the mainboard
+    coverage_declaration,       # see below
+    threat_profile=dossier["threat_profile"],
+    seed=0,
+)
+```
+
+Display `deck_checks.format_checks_report(report)`.
+
+**Inputs you assemble first:** `role_counts` counts the mainboard cards whose assigned role is a pipeline payoff or enabler (functional copies, qty-expanded). `coverage_declaration` maps each of the five threat classes — `wide_boards`, `single_large_threat`, `noncreature_permanents`, `stack`, `graveyard` — to either `{"cards": [<mainboard names>]}` or `{"conceded": "<one-line mechanism reason>"}`. A concession is legitimate (a fast enough clock answers everything) but it must be written; the cheapest lie is the class you never mention.
+
+**Gate tiers:**
+- **HARD — treat like a mana-audit FAIL:** `assembly` (an engine role's P(seen by thesis turn) < 0.75 — either add functional copies, or the thesis turn was optimistic: revise it and say so) and `coverage` (missing class, phantom card name, empty concession). Repair, recount any moved verdict, re-run 5D + this gate.
+- **WARN-tier — respond, don't rebuild:** `curve` and `goldfish`. Each WARN flag gets one line in `build_output.structural_responses` stating the mechanism-grounded reason the deviation is accepted ("the curve tops at 6 because the thesis turn is 6 and both 6-drops are the kill"). IRON RULE 3 binds these lines: no prose ratio counts.
+
+**Also record `build_output.failure_modes`** — one mechanism-grounded line each for **flood** (what do excess lands do here?), **screw** (which hands are keepable on 2 lands?), and **decapitation** (what is the line when the key piece is answered on sight? if the honest answer is "lose", the deck needs protection slots or a second route — say which it has).
+
+Store the full report as `build_output.structural_checks`. It ships in the grill bundle with everything else in `build_output`; the Challenger audits the derivation through its existing checks.
+
+---
+
 ## Phase 7: Sideboard
 
 Skip if the user opted out or if the format does not normally use sideboards.
@@ -630,7 +666,7 @@ The bundle contains:
 - `audit`: the mana audit result object from Phase 6
 - `card_pool_rules`: the confirmed pool rules object from Phase 0
 - `restrictions_checklist`: the compliance checklist from Phase 5
-- `build_output`: your recorded derivation — `macro_archetype`, `deck_identity`, `slot_allocation`, `land_math`, `pip_math`, `quantitative_verdicts`. This lets the Challenger audit the **derivation**, not just the list.
+- `build_output`: your recorded derivation — `macro_archetype`, `deck_identity`, `thesis_turn`, `default_role`, `slot_allocation`, `land_math`, `pip_math`, `quantitative_verdicts`, `coverage`, `failure_modes`, `structural_checks`, `structural_responses`. This lets the Challenger audit the **derivation**, not just the list.
 - `validation_report`: the Phase 5D check results (all PASS by the time you get here)
 - `attempt`: the integer k
 - `legal_pool`, `cube_index` (from `pool_tiers.json`), `dossier`, `dossier_sha256`
@@ -862,6 +898,10 @@ QUANTITATIVE VERDICTS
 {The build_output.quantitative_verdicts table, reproduced as-is:
  card | claim | numerator/denominator | verdict.}
 
+STRUCTURAL CHECKS
+{deck_checks.format_checks_report(build_output.structural_checks), followed by
+ one line per structural_responses entry. Reproduced as-is, never re-authored.}
+
 CARDS CONSIDERED BUT EXCLUDED
 {GENERATED from sweep.json: every EXCLUDE_CONSIDERED entry, reproduced
  as-is — card | reason. Never re-authored, never editorialised, never
@@ -885,7 +925,7 @@ RESTRICTIONS COMPLIANCE
 - Rarity abbreviation: C Common, U Uncommon, R Rare, M Mythic
 - `Color` column value is the card's base mana cost colors from the `colors` field (not `color_identity`); kicker pips are excluded; CubeCobra single-letter notation: `B`, `R`, `BR`, `GU`, `C` (colorless); pad all Color values to the same column width for alignment
 - **Canonical section names for analysis.md** (strict — do not rename or reorder): `## MAINBOARD`, `## SIDEBOARD`, `## ANALYSIS`, `## MANA AUDIT: {PASS|WARN|FAIL}`, `## RESTRICTIONS COMPLIANCE`; sub-headers: `### LANDS`, `### CREATURES`, `### INSTANTS & SORCERIES`, `### OTHER SPELLS`
-- **`## ANALYSIS` always opens with `### DECK IDENTITY`** before any other content. Order within `## ANALYSIS`: `### DECK IDENTITY` → free-form observations → `### QUANTITATIVE VERDICTS` → `### CARDS CONSIDERED BUT EXCLUDED` → `### COLOR ALLOCATION OBSERVATION` (only if the Challenger raised one) → any remaining subsections.
+- **`## ANALYSIS` always opens with `### DECK IDENTITY`** before any other content. Order within `## ANALYSIS`: `### DECK IDENTITY` → free-form observations → `### QUANTITATIVE VERDICTS` → `### STRUCTURAL CHECKS` → `### CARDS CONSIDERED BUT EXCLUDED` → `### COLOR ALLOCATION OBSERVATION` (only if the Challenger raised one) → any remaining subsections.
 - **`### COLOR ALLOCATION OBSERVATION`** reproduces the Challenger's `color_allocation_observation` verbatim, prefixed with one line stating that the deck was built in the colours the user locked and that nothing acted on the observation. It is advisory only — the deck on the page is the deck that was agreed.
 - **No Scryfall links. No external links of any kind.** Card names are plain text everywhere — in every card table, in the ANALYSIS body, and in `analysis.md`. Do not wrap card names in markdown links.
 
@@ -1004,7 +1044,7 @@ restrictions_status: "<PASS|FAIL>"
    - `### INSTANTS & SORCERIES ({N})` — card table in a fenced code block; omit if empty
    - `### OTHER SPELLS ({N})` — card table in a fenced code block; omit if empty
 2. `## SIDEBOARD ({N})` — card table in a fenced code block
-3. `## ANALYSIS` — free Markdown body (NOT in a code block). **MUST open with `### DECK IDENTITY`** before any other content. Then free-form observations — at least one substantive, scoped to this deck's run only (see the analysis firewall). Then `### QUANTITATIVE VERDICTS` (reproduced as-is), then `### CARDS CONSIDERED BUT EXCLUDED` (generated from sweep.json), then `### COLOR ALLOCATION OBSERVATION` if the Challenger raised one.
+3. `## ANALYSIS` — free Markdown body (NOT in a code block). **MUST open with `### DECK IDENTITY`** before any other content. Then free-form observations — at least one substantive, scoped to this deck's run only (see the analysis firewall). Then `### QUANTITATIVE VERDICTS` (reproduced as-is), then `### STRUCTURAL CHECKS` (the `format_checks_report` output in a fenced code block plus any `structural_responses` lines, reproduced as-is), then `### CARDS CONSIDERED BUT EXCLUDED` (generated from sweep.json), then `### COLOR ALLOCATION OBSERVATION` if the Challenger raised one.
 4. `## MANA AUDIT: {PASS|WARN|FAIL}` — audit report in a fenced code block
 5. `## RESTRICTIONS COMPLIANCE` — checklist in a fenced code block
 
@@ -1072,6 +1112,7 @@ Candidates come from two sources: cube facts you discovered while building that 
 | Display commander table | `commander_finder.format_commanders_table(candidates)` |
 | Run mana audit | `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)` |
 | Display audit report | `deck_audit.format_audit_report(audit)` |
+| **Structural gate (curve / assembly / goldfish / coverage)** | `deck_checks.run_structural_checks(...)` + `deck_checks.format_checks_report(report)` — Phase 6b. Thresholds and curve bands live in `cuber/deck_checks.py`; NEVER re-derive them by hand |
 | Verify card exists | Search working pool cache by exact name — never training data |
 | Read oracle text | `card.oracle_text` from the working pool cache (you) or the grill bundle (Challenger) — never training data |
 | Pool tiers | `_workspace/<run-token>/attempt-<k>/pool_tiers.json` — `legal_pool` + `cube_index`, disjoint, precomputed `pips`/`has_generic`/`subtypes` |
