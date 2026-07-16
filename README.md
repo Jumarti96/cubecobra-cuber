@@ -243,7 +243,7 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 | `fetch-set <code>` | Fetch every card from a retail set and create a full cube project. | `cuber fetch-set eoe` |
 | `fetch-set <code> --include-basics` | Include basic lands. | `cuber fetch-set dmu --include-basics` |
 
-**Deck comparison (acceptance testing):** `scripts/make_judge_bundle.py` assembles a blinded A/B bundle from two saved deck folders (origin-identifying fields stripped, labels randomized, hash printed); `docs/deck-judge-protocol.md` defines the 3-judge cold-agent protocol used to accept or reject `/build-deck` changes.
+**Deck comparison (acceptance testing):** `scripts/make_judge_bundle.py` assembles a blinded A/B bundle from two saved deck folders (origin-identifying fields stripped, labels randomized, hash printed) for cold-agent judge comparisons used to accept or reject `/build-deck` changes; run it with `--help` for usage.
 
 ---
 
