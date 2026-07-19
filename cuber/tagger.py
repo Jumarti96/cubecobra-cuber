@@ -244,6 +244,10 @@ Label definitions:
   part of its own resolution; Phyrexian mana; "Pay N life" in its cost).
 
 Boundary rules:
+- Cost labels are UNCONDITIONAL: if oracle text imposes an additional-cost
+  discard or sacrifice, tag Cards: Extra-Cost / Board: Sacrifice-Cost even
+  when the spell's draws or effects net the exchange back to zero or better.
+  Never fold a cost into a net label — the cost still has to be paid.
 - OPTIONAL repeatable activated abilities are NOT resource_exchange costs.
   A sacrifice outlet's activation cost belongs to Engine/Outlet and
   mechanical_functions, not here. This pillar covers what casting the card
