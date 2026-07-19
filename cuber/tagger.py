@@ -60,12 +60,24 @@ MECHANICAL_FUNCTIONS_BASE = [
     "Alternate Win Condition",
 ]
 
+RESOURCE_EXCHANGE = [
+    "Mana: Net-Positive",
+    "Mana: Self-Replacing",
+    "Mana: Ongoing-Cost",
+    "Cards: Net-Positive",
+    "Cards: Self-Replacing",
+    "Cards: Extra-Cost",
+    "Board: Sacrifice-Cost",
+    "Life: Cost",
+]
+
 # ── Prompt helpers ────────────────────────────────────────────────────────────
 
 _macro_archetype_list = ", ".join(MACRO_ARCHETYPES)
 _synergy_cluster_list = "\n".join(f"  {c}" for c in SYNERGY_CLUSTERS)
 _structural_role_list = "\n".join(f"  {r}" for r in STRUCTURAL_ROLES)
 _mech_functions_list = ", ".join(MECHANICAL_FUNCTIONS_BASE)
+_resource_exchange_list = "\n".join(f"  {r}" for r in RESOURCE_EXCHANGE)
 
 SYSTEM_PROMPT = f"""You are a rigorous, deterministic MTG data-extraction engine operating within a card analysis pipeline.
 
@@ -82,7 +94,8 @@ Respond ONLY with a valid JSON array. Each element covers one card:
       "macro_archetypes": [...],
       "synergy_clusters": [...],
       "structural_roles": [...],
-      "mechanical_functions": [...]
+      "mechanical_functions": [...],
+      "resource_exchange": [...]
     }}
   }},
   ...
@@ -197,6 +210,57 @@ Use canonical strings when applicable:
 Free-form additions are allowed for actions outside this list (e.g., "Damage Prevention Override").
 
 ════════════════════════════════════════════════════════════
+PILLAR 5 — resource_exchange
+════════════════════════════════════════════════════════════
+The net resource ledger of playing this card, judged over its FULL use from a
+single card slot (a flashback recast counts toward the same slot's total).
+Select from:
+{_resource_exchange_list}
+
+Empty array [] for resource-neutral cards — most cards are neutral.
+Multiple values across different axes are permitted.
+
+Label definitions:
+- Mana: Net-Positive — resolving it yields STRICTLY MORE mana than was paid
+  for it ("Add {{B}}{{B}}{{B}}" on a 1-mana spell; a 0-cost artifact that adds
+  mana). An exact refund is Mana: Self-Replacing, not Net-Positive.
+- Mana: Self-Replacing — it refunds approximately its own cost on resolution
+  (untaps lands equal to its cost; "when it enters, add {{X}}" equal to cost).
+- Mana: Ongoing-Cost — it demands mana AFTER resolution to keep or use
+  (upkeep cost, cumulative upkeep, echo, "sacrifice unless you pay").
+- Cards: Net-Positive — counting the card itself AND any additional-cost
+  discards/sacrifices as spent, its full use yields MORE cards than it
+  consumed ("Draw two cards" as its only cost; a draw spell recastable from
+  the graveyard from the same slot). A spell that discards a card to draw
+  two is net zero, not Net-Positive.
+- Cards: Self-Replacing — it exactly replaces itself: a cantrip, an ETB
+  "draw a card", cycling. Net zero cards.
+- Cards: Extra-Cost — casting or resolving it consumes additional cards from
+  hand beyond itself ("As an additional cost, discard a card",
+  "then discard a card at random").
+- Board: Sacrifice-Cost — casting it requires sacrificing a permanent you
+  control as a cost ("As an additional cost, sacrifice a creature"; evoke).
+- Life: Cost — it demands a life payment beyond mana ("You lose 2 life" as
+  part of its own resolution; Phyrexian mana; "Pay N life" in its cost).
+
+Boundary rules:
+- OPTIONAL repeatable activated abilities are NOT resource_exchange costs.
+  A sacrifice outlet's activation cost belongs to Engine/Outlet and
+  mechanical_functions, not here. This pillar covers what casting the card
+  and its mandatory static/triggered demands do to your resources.
+- Tokens and other non-card objects (Treasure, Clue, Food, creature tokens)
+  are NOT cards: they never count toward the Cards axis.
+- Looting ("draw a card, then discard a card") is selection, not a delta:
+  neutral on the Cards axis.
+- A drawback the card imposes as an EFFECT on all players symmetrically
+  (each player sacrifices/discards) is not a cost either.
+- Free-form additions are allowed for material exchange properties beyond
+  the labels, ALWAYS alongside the canonical label they qualify, never
+  replacing it: a spell that discards a card at random is
+  ["Cards: Extra-Cost", "Risk: Random-Discard"] — the random discard can
+  hit a key card, but it is still a card consumed.
+
+════════════════════════════════════════════════════════════
 FEW-SHOT CALIBRATION EXAMPLES
 ════════════════════════════════════════════════════════════
 
@@ -220,6 +284,32 @@ Type: Creature — Wall
 Oracle: Defender
 Whenever you cast an instant or sorcery spell, you may draw a card. If you do, discard a card. This ability triggers only once each turn.
 
+Card: Seething Song
+Type: Instant
+Oracle: Add {{R}}{{R}}{{R}}{{R}}{{R}}.
+
+Card: Night's Whisper
+Type: Sorcery
+Oracle: You draw two cards and you lose 2 life.
+
+Card: Lightning Axe
+Type: Instant
+Oracle: As an additional cost to cast this spell, discard a card or pay {{5}}.
+Lightning Axe deals 5 damage to target creature.
+
+Card: Frantic Search
+Type: Instant
+Oracle: Draw two cards, then discard two cards. Untap up to three lands.
+
+Card: Tormenting Voice
+Type: Sorcery
+Oracle: As an additional cost to cast this spell, discard a card.
+Draw two cards.
+
+Card: Great Whale
+Type: Creature — Whale
+Oracle: When Great Whale enters the battlefield, untap up to seven lands.
+
 Output:
 [
   {{
@@ -228,7 +318,8 @@ Output:
       "macro_archetypes": ["Combo", "Midrange"],
       "synergy_clusters": ["Aristocrats/Sacrifice", "Graveyard", "Tribal/Kindred"],
       "structural_roles": ["Engine/Outlet"],
-      "mechanical_functions": ["Sacrifice Outlet", "Card Selection"]
+      "mechanical_functions": ["Sacrifice Outlet", "Card Selection"],
+      "resource_exchange": []
     }}
   }},
   {{
@@ -237,7 +328,8 @@ Output:
       "macro_archetypes": ["Aggro", "Tempo", "Midrange"],
       "synergy_clusters": ["Spellslinger"],
       "structural_roles": ["Interaction/Disruption", "Standalone Threat"],
-      "mechanical_functions": ["Targeted Removal", "Direct Damage", "Damage Prevention Override"]
+      "mechanical_functions": ["Targeted Removal", "Direct Damage", "Damage Prevention Override"],
+      "resource_exchange": []
     }}
   }},
   {{
@@ -246,7 +338,8 @@ Output:
       "macro_archetypes": ["Midrange"],
       "synergy_clusters": ["Tokens", "Defender Matters"],
       "structural_roles": ["Payload/Payoff", "Enabler/Fodder"],
-      "mechanical_functions": ["Token Generation"]
+      "mechanical_functions": ["Token Generation"],
+      "resource_exchange": []
     }}
   }},
   {{
@@ -255,7 +348,68 @@ Output:
       "macro_archetypes": ["Control"],
       "synergy_clusters": ["Spellslinger", "Defender Matters"],
       "structural_roles": ["Engine/Outlet", "Infrastructure/Consistency"],
-      "mechanical_functions": ["Card Selection", "Looting"]
+      "mechanical_functions": ["Card Selection", "Looting"],
+      "resource_exchange": []
+    }}
+  }},
+  {{
+    "card_name": "Seething Song",
+    "taxonomic_profile": {{
+      "macro_archetypes": ["Combo"],
+      "synergy_clusters": ["Storm"],
+      "structural_roles": ["Enabler/Fodder"],
+      "mechanical_functions": ["Mana Ramp"],
+      "resource_exchange": ["Mana: Net-Positive"]
+    }}
+  }},
+  {{
+    "card_name": "Night's Whisper",
+    "taxonomic_profile": {{
+      "macro_archetypes": ["Control", "Midrange"],
+      "synergy_clusters": [],
+      "structural_roles": ["Infrastructure/Consistency"],
+      "mechanical_functions": ["Card Draw"],
+      "resource_exchange": ["Cards: Net-Positive", "Life: Cost"]
+    }}
+  }},
+  {{
+    "card_name": "Lightning Axe",
+    "taxonomic_profile": {{
+      "macro_archetypes": ["Aggro", "Tempo"],
+      "synergy_clusters": ["Graveyard"],
+      "structural_roles": ["Interaction/Disruption"],
+      "mechanical_functions": ["Targeted Removal"],
+      "resource_exchange": ["Cards: Extra-Cost"]
+    }}
+  }},
+  {{
+    "card_name": "Frantic Search",
+    "taxonomic_profile": {{
+      "macro_archetypes": ["Combo"],
+      "synergy_clusters": ["Graveyard"],
+      "structural_roles": ["Infrastructure/Consistency", "Enabler/Fodder"],
+      "mechanical_functions": ["Looting", "Land Untap"],
+      "resource_exchange": ["Mana: Self-Replacing"]
+    }}
+  }},
+  {{
+    "card_name": "Tormenting Voice",
+    "taxonomic_profile": {{
+      "macro_archetypes": ["Midrange"],
+      "synergy_clusters": ["Graveyard"],
+      "structural_roles": ["Infrastructure/Consistency"],
+      "mechanical_functions": ["Card Draw"],
+      "resource_exchange": ["Cards: Extra-Cost"]
+    }}
+  }},
+  {{
+    "card_name": "Great Whale",
+    "taxonomic_profile": {{
+      "macro_archetypes": ["Combo"],
+      "synergy_clusters": ["Blink/ETB"],
+      "structural_roles": ["Enabler/Fodder"],
+      "mechanical_functions": ["Mana Ramp", "Land Untap"],
+      "resource_exchange": ["Mana: Self-Replacing"]
     }}
   }}
 ]

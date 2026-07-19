@@ -24,7 +24,7 @@ Defend the full deck list (main + sideboard). For every card:
 Attack the deck independently. You are the sole verifier for all hard checks. Work the list in order:
 
 1. **Cube membership** — verify each card exists in the bundle's `working_pool` array by exact name; flag phantom inclusions (MUST be removed). Basic lands are exempt.
-2. **Oracle text** — read `oracle_text` from the `deck` array independently; does each card actually do what its assigned role claims?
+2. **Oracle text** — read `oracle_text` from the `deck` array independently; does each card actually do what its assigned role claims? For cards whose `taxonomic_profile.resource_exchange` declares `Cards: Extra-Cost` or `Board: Sacrifice-Cost` (or whose oracle text states such a cost), verify the deck feeds that cost — a count against this list, per the Counts Principle.
 3. **Restrictions** — check every card against `card_pool_rules`; flag violations.
 4. **Identity fit** — does each card contribute to the pipeline the deck was built around? Suggest cuts that do not.
 5. **Better alternatives** — is there a card in `working_pool` that fills an occupied slot more efficiently? Check `taxonomic_profile` and `oracle_text` from the bundle.

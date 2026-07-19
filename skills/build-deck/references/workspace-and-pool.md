@@ -29,6 +29,7 @@ From the user's answer, infer a `card_pool_rules` object:
 - `multipliers`: per-rarity max copy count (rarity not listed = 1 copy).
 - `only_from`: per-rarity allowlist — all other cards of that rarity are excluded.
 - `excluded`: specific card names excluded regardless of other rules.
+- **Basic lands are exempt from all of the above** (unlimited copies, never rarity-capped) unless the user explicitly restricted them — they are format-supplied, not cube contents (SKILL.md Phase 0).
 
 ## Working Pool Cache — per-card field lists
 
@@ -39,6 +40,19 @@ Include per-card fields: `name`, `oracle_text`, `mana_cost`, `colors`, `color_id
 Exclude: `image URL`, `image Back URL`, `MTGO ID`, `Custom`, `Voucher`, `status`, `Finish`, `Set`, `Collector Number`, and any other display-only metadata.
 
 **One exemption:** the Phase 11 export needs `Set`, `Collector Number`, and image URLs for `deck.tsv`, which the working pool deliberately excludes. Capture those in Phase 0 alongside the working pool — write `_workspace/<run-token>/export_meta.json` keyed by card name — so Phase 11 never has to re-open `enriched.json`.
+
+## Basic Lands — synthesize when the cube lacks them
+
+Basics are format-supplied (SKILL.md Phase 0). If any of the five basics is absent from the merged pool, append a minimal entry for each missing one to `working_pool.json` when you write it — never go looking for them in other files:
+
+```json
+{ "name": "Island", "oracle_text": "({T}: Add {U}.)", "mana_cost": "",
+  "colors": [], "color_identity": ["U"], "tags": [], "taxonomic_profile": null,
+  "cmc": 0, "type_line": "Basic Land — Island", "rarity": "common",
+  "power": null, "toughness": null, "board": "mainboard" }
+```
+
+Same shape for Plains `{W}`, Swamp `{B}`, Mountain `{R}`, Forest `{G}`. Add a matching `export_meta.json` stub per synthesized basic (empty `Set` / `Collector Number` / image fields are fine — the Phase 11 TSV tolerates blanks). Basics already in the cube keep their real enriched data.
 
 ## Workspace Layout
 
