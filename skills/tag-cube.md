@@ -4,7 +4,7 @@ description: Tag every card in a locally cached cube by functional role
 ---
 # /tag-cube — AI Taxonomic Tagger
 
-Tag every card in a locally cached cube using the four-pillar `taxonomic_profile` taxonomy. Oracle text is the only source of truth. Writes `tagged.csv` ready to upload to CubeCobra, and updates `enriched.json` with full `taxonomic_profile` data.
+Tag every card in a locally cached cube using the five-pillar `taxonomic_profile` taxonomy. Oracle text is the only source of truth. Writes `tagged.csv` ready to upload to CubeCobra, and updates `enriched.json` with full `taxonomic_profile` data.
 
 ---
 
@@ -43,7 +43,7 @@ For each card in `cards[]` where `board == "mainboard"`:
 
 1. Read `oracle_text` from enriched.json (never from training data).
 2. For DFCs, read all faces: `card_faces[*].oracle_text`.
-3. Assign all four pillars. Each pillar is an array of strings.
+3. Assign all five pillars. Each pillar is an array of strings.
 
 ---
 
@@ -133,6 +133,34 @@ Free-form additions allowed for actions outside this list.
 
 ---
 
+#### Pillar 5 — `resource_exchange`
+
+The net resource ledger of playing the card, judged over its **full use from a single
+card slot** (a flashback recast counts toward the same slot's total). Empty array `[]`
+for resource-neutral cards — most cards are neutral. Multiple values across axes permitted.
+
+| Label | When to assign |
+|-------|---------------|
+| `Mana: Net-Positive` | Resolving yields more mana than was paid (Dark Ritual, Black Lotus) |
+| `Mana: Self-Replacing` | Refunds ≈ its own cost on resolution (Peregrine Drake, Frantic Search) |
+| `Mana: Ongoing-Cost` | Demands mana after resolution — upkeep, cumulative upkeep, echo (Mystic Remora) |
+| `Cards: Net-Positive` | Counting itself as spent, full use yields more cards than consumed (Deep Analysis, Night's Whisper) |
+| `Cards: Self-Replacing` | Exactly replaces itself — cantrip, ETB draw, cycling (Baleful Strix) |
+| `Cards: Extra-Cost` | Consumes additional cards from hand beyond itself (Lightning Axe, Gamble) |
+| `Board: Sacrifice-Cost` | Casting requires sacrificing a permanent (Bone Splinters, evoke) |
+| `Life: Cost` | Demands a life payment beyond mana (Thoughtseize, Phyrexian mana) |
+
+**Boundary rules:** optional repeatable activated abilities are NOT resource_exchange
+costs (a sac outlet's activation cost is Engine/Outlet territory); looting
+(draw-then-discard) is selection, neutral on the Cards axis; symmetric effects imposed
+on all players are effects, not costs. Free-form additions allowed for material
+exchange properties outside the list — e.g. `Risk: Random-Discard` on Gamble, whose
+random discard can hit a key card. This pillar's labels and boundary rules must stay
+in sync with the `cuber tag` LLM prompt in `cuber/tagger.py` — keep the two aligned
+if either changes.
+
+---
+
 ### Step 3 — Show summary for review
 
 Before writing any files, display:
@@ -143,6 +171,7 @@ Before writing any files, display:
 | synergy_clusters | Top 5 clusters by count |
 | structural_roles | All 6 roles by count |
 | mechanical_functions | Top 5 functions by count |
+| resource_exchange | All labels by count (+ count of neutral cards) |
 
 List any "Needs Review" cards (missing or ambiguous oracle text).
 
@@ -156,7 +185,7 @@ If using deterministic rule-based tagging (free path), proceed directly to writi
 Write in this exact order:
 
 1. **Update `enriched.json`** — write the full `taxonomic_profile` object to each card.
-2. **Backfill `mainboard.csv`** — write the `tags` column for every card row. Use the same logic as `cuber tag`: union of `synergy_clusters` + `structural_roles` + `mechanical_functions`, semicolon-separated, excluding `macro_archetypes`.
+2. **Backfill `mainboard.csv`** — write the `tags` column for every card row. Use the same logic as `cuber tag`: union of `synergy_clusters` + `structural_roles` + `mechanical_functions` + `resource_exchange`, semicolon-separated, excluding `macro_archetypes`.
 3. **Write `tagged.csv`** — audit log with `name,tags` columns.
 
 Confirm: **"enriched.json, mainboard.csv, and tagged.csv updated in cubes/<slug>/"**

@@ -104,6 +104,8 @@ Ask the user (in natural language):
 
 If the user provides no restrictions, proceed immediately with the full cube mainboard.
 
+**Basic lands are format-supplied.** The pool always includes an unlimited supply of the five basic lands (Plains, Island, Swamp, Mountain, Forest), whether or not the cube list contains them — unless the user explicitly restricts basics. Never inspect other files to check whether basics are in the cube; `dossier.mana_infrastructure.basics_in_pool` is informational only. When the cube lacks them, add them to the working pool per `references/workspace-and-pool.md`.
+
 Infer the `card_pool_rules` object from the answer — the JSON shape and field semantics are in `references/workspace-and-pool.md`.
 
 **Display the inferred `card_pool_rules` and ask the user to confirm before proceeding.** If the user corrects the inferred object, update it and re-display. Proceed only after explicit confirmation.
@@ -364,6 +366,7 @@ Saved:
 | Filter by color/type/tag/CMC | `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` |
 | Query Payoff candidates | Filter working pool cache by `taxonomic_profile.structural_roles` containing `"Payload/Payoff"` |
 | Query synergy support | Filter working pool cache by `taxonomic_profile.synergy_clusters` overlap + `"Enabler/Fodder"` or `"Engine/Outlet"` in `structural_roles` |
+| **Card resource profile (mana/card economy)** | `taxonomic_profile.resource_exchange` from the working pool — `Mana:`/`Cards:`/`Board:`/`Life:` labels, empty = neutral. Key absent (untagged cube) → derive from oracle text |
 | Find commander candidates | `commander_finder.find_commanders(id, color_identity)` |
 | Display commander table | `commander_finder.format_commanders_table(candidates)` |
 | Run mana audit | `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)` |

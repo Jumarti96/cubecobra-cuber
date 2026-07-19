@@ -54,6 +54,12 @@ STRUCTURAL CHECKS
 {deck_checks.format_checks_report(build_output.structural_checks), followed by
  one line per structural_responses entry.}
 
+FAILURE MODES
+{All six rows from build_output.failure_modes — flood, screw, decapitation,
+ gas-out, raced, disruption-fizzle — as a table:
+ Mode | Verdict | Reasoning
+ Verdict is "mitigation" or "accepted"; Reasoning is the entry's text, verbatim.}
+
 CARDS CONSIDERED BUT EXCLUDED
 {The sweep's considered_but_excluded entries, reproduced as card | reason.}
 
@@ -75,7 +81,8 @@ RESTRICTIONS COMPLIANCE
 - Rarity abbreviation: C Common, U Uncommon, R Rare, M Mythic
 - `Color` column value is the card's base mana cost colors from the `colors` field (not `color_identity`); kicker pips are excluded; CubeCobra single-letter notation: `B`, `R`, `BR`, `GU`, `C` (colorless); pad all Color values to the same column width for alignment
 - **Canonical section names for analysis.md** (strict — do not rename or reorder): `## MAINBOARD`, `## SIDEBOARD`, `## ANALYSIS`, `## MANA AUDIT: {PASS|WARN|FAIL}`, `## RESTRICTIONS COMPLIANCE`; sub-headers: `### LANDS`, `### CREATURES`, `### INSTANTS & SORCERIES`, `### OTHER SPELLS`
-- **`## ANALYSIS` always opens with `### DECK IDENTITY`** before any other content. Order within `## ANALYSIS`: `### DECK IDENTITY` → free-form observations → `### STRUCTURAL CHECKS` → `### CARDS CONSIDERED BUT EXCLUDED` → any remaining subsections.
+- **`## ANALYSIS` always opens with `### DECK IDENTITY`** before any other content. Order within `## ANALYSIS`: `### DECK IDENTITY` → free-form observations → `### STRUCTURAL CHECKS` → `### FAILURE MODES` → `### CARDS CONSIDERED BUT EXCLUDED` → any remaining subsections.
+- **`### FAILURE MODES` is a required subsection** of `## ANALYSIS`: a table with one row per mode — all six of `flood`, `screw`, `decapitation`, `gas-out`, `raced`, `disruption-fizzle` — columns `Mode | Verdict | Reasoning`, filled verbatim from `build_output.failure_modes`.
 - **No Scryfall links. No external links of any kind.** Card names are plain text everywhere — in every card table, in the ANALYSIS body, and in `analysis.md`. Do not wrap card names in markdown links.
 
 ## Phase 10 — analysis validator (`_tmp_validate_analysis.py`)
@@ -84,7 +91,8 @@ After writing `analysis.md`, run a light re-parse that asserts:
 - each section's summed `Qty` equals the number in that section's own header;
 - `spells + lands == total` in the `## MAINBOARD` header;
 - the section totals sum to the mainboard/sideboard counts in `deck.json`;
-- `analysis.md` contains zero occurrences of `scryfall`.
+- `analysis.md` contains zero occurrences of `scryfall`;
+- `### FAILURE MODES` exists inside `## ANALYSIS` and all six mode names — `flood`, `screw`, `decapitation`, `gas-out`, `raced`, `disruption-fizzle` — appear under it.
 
 Any mismatch is a **hard failure**: regenerate `analysis.md` from the deck arrays. Never hand-patch the output to make the validator agree. This runs on every write of `analysis.md`.
 
@@ -165,7 +173,7 @@ restrictions_status: "<PASS|FAIL>"
    - `### INSTANTS & SORCERIES ({N})` — card table in a fenced code block; omit if empty
    - `### OTHER SPELLS ({N})` — card table in a fenced code block; omit if empty
 2. `## SIDEBOARD ({N})` — card table in a fenced code block
-3. `## ANALYSIS` — free Markdown body (NOT in a code block). **MUST open with `### DECK IDENTITY`**, then free-form observations (at least one substantive), then `### STRUCTURAL CHECKS` (the `format_checks_report` output in a fenced code block plus any `structural_responses` lines), then `### CARDS CONSIDERED BUT EXCLUDED` (the sweep's `considered_but_excluded` entries).
+3. `## ANALYSIS` — free Markdown body (NOT in a code block). **MUST open with `### DECK IDENTITY`**, then free-form observations (at least one substantive), then `### STRUCTURAL CHECKS` (the `format_checks_report` output in a fenced code block plus any `structural_responses` lines), then `### FAILURE MODES` (the six-row `Mode | Verdict | Reasoning` table from `build_output.failure_modes`), then `### CARDS CONSIDERED BUT EXCLUDED` (the sweep's `considered_but_excluded` entries).
 4. `## MANA AUDIT: {PASS|WARN|FAIL}` — audit report in a fenced code block
 5. `## RESTRICTIONS COMPLIANCE` — checklist in a fenced code block
 

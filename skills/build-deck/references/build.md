@@ -59,6 +59,10 @@ Read `dossier.mana_infrastructure` before choosing the mana base — `enters_tap
 
 **5. FILL.** For every card: quote `oracle_text` from the working pool cache before including it; verify against `card_pool_rules`; build a running restrictions checklist.
 
+Read `taxonomic_profile.resource_exchange` alongside the oracle text — it is the card's resource ledger (`Mana:`/`Cards:`/`Board:`/`Life:` labels; empty = neutral). When the key is absent (cube tagged before the pillar existed), derive the same labels from oracle text for the cards you evaluate. Two obligations follow:
+- Every mainboard card tagged `Cards: Extra-Cost` or `Board: Sacrifice-Cost` must have its cost **fed**, stated as a count per the Counts Principle: how many cards in this list can pay that cost when it matters?
+- Every `Mana: Ongoing-Cost` card gets one line in the mana reasoning stating how this deck keeps paying it.
+
 **6. COUNT-DEPENDENT VERDICTS (the Counts Principle).** For every inclusion or rejection whose value turns on how many other cards qualify (cost reducers, tribal/type-matters payoffs, storm/spell-count triggers, graveyard counts, devotion, threshold, metalcraft, delirium, domain, affinity), state the count as a numerator/denominator against **this deck's list** — not an adjective. Compute it against the mainboard you actually built; if you later swap a card and a denominator moves, recount.
 
 > "Helm of Awakening discounts every nonland card with a generic component: 18 of the 24 nonland cards qualify. INCLUDE."
@@ -71,8 +75,8 @@ Read `dossier.mana_infrastructure` before choosing the mana base — `enters_tap
 Write `_workspace/<run-token>/_tmp_validate_build.py` and run these before the grill. Every check is a string or number comparison — none is a judgment:
 
 1. Mainboard count (summing `qty`) == `deck_size` (+ commander). Sideboard == `sideboard_size`.
-2. Every `name` exists by **exact string match** in the working pool cache.
-3. Copy counts obey `card_pool_rules` — cross-check with `cube_search.get_max_copies`.
+2. Every `name` exists by **exact string match** in the working pool cache (synthesized basics count — they are in the cache).
+3. Copy counts obey `card_pool_rules` — cross-check with `cube_search.get_max_copies`. **Basic lands are exempt**: unlimited copies unless the user explicitly restricted them.
 4. Every nonland `color_identity` ⊆ `core_colors` ∪ `splash_colors` (or the commander's identity).
 5. ≤ 3 cards for each splash color, and every splashed card is in `splash_candidates`.
 
@@ -121,7 +125,7 @@ Reason through each mode against THIS deck. Mitigate only when doing so does not
 | `flood` | What do excess lands do here — what turns a surplus land into action? |
 | `screw` | Which hands are keepable on 2 lands, and what digs you out? |
 | `decapitation` | What is the line when the key piece is answered on sight? |
-| `gas-out` | What happens when the hand is empty? The storm/spell-count failure: the mana is there, the cards are not. What refuels a deck that must keep playing cards? |
+| `gas-out` | What happens when the hand is empty? The storm/spell-count failure: the mana is there, the cards are not. What refuels a deck that must keep playing cards? Ground the answer in the deck's count of `Cards: Net-Positive` + `Cards: Self-Replacing` cards (resource_exchange). |
 | `raced` | Against the fastest clocks in `dossier.threat_profile`, does this deck win or interact before it dies? |
 | `disruption-fizzle` | The critical turn meets one piece of interaction — a counterspell, removal mid-chain. Does the plan survive, retry, or fold? Distinct from `decapitation`: this is the key TURN being interacted with, not the key CARD being answered on sight. |
 

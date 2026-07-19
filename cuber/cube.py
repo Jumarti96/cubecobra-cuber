@@ -98,6 +98,7 @@ class Card:
             list(p.get("synergy_clusters") or [])
             + list(p.get("structural_roles") or [])
             + list(p.get("mechanical_functions") or [])
+            + list(p.get("resource_exchange") or [])
         )
 
     def to_dict(self) -> Dict[str, Any]:
