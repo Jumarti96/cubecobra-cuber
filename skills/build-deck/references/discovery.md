@@ -1,6 +1,6 @@
 # build-deck reference — Phases 2–4: discovery mechanics
 
-Read at the start of Phase 2; covers the dossier census, interaction-chain authoring, pipeline discovery, splash evaluation, and commander selection. Mechanics only — the binding rules (dossier admissibility, freeze, IRON RULES) are in SKILL.md.
+Read at the start of Phase 2; covers the dossier census, the optional interaction-chain aid, pipeline discovery, splash evaluation, and commander selection. Mechanics only — the IRON RULE and the Counts Principle are in SKILL.md.
 
 ## Phase 2 Step 0 — reading the dossier census
 
@@ -25,6 +25,8 @@ The machine census gives you, already computed:
 - **THIN** — 1 free dual, or only rare/self-bouncing fixing, for some pair
 - **NONE** — 0 free duals for at least one pair
 
+**Verify each named dual/manland against its oracle text before trusting the count.** The census can miscount: a colourless manland (e.g. a creature-land that only taps for `{C}`) is not colored fixing, and a land that truncates to one colour can be undercounted. Read the oracle text of any land whose fixing is load-bearing before you rely on the number.
+
 **Colour-count escalation** — apply when evaluating colour count. Skip when the user locked an identity in Phase 1, or when Phase 4 commander selection bound it.
 
 | Colour count | Recommend when |
@@ -37,15 +39,14 @@ The machine census gives you, already computed:
 
 Never escalate colour count merely because the tag pool is larger. Fixing must justify the jump.
 
-Produce an **Environment Characterization** sentence for the *user* from the dossier before proceeding. (This sentence is for the user. It does not go into any bundle — the dossier's numbers do.)
+Produce an **Environment Characterization** sentence for the user from the dossier before proceeding:
+> "Balanced draft environment with strong graveyard and spells-matter themes; domain signal present (12% tag density) but universal fixing absent — 3-color is achievable, 4-5 requires explicit fixing."
 
-## Phase 2 Step 0b — authoring interaction chains
+## Phase 2 Step 0b — interaction chains (optional aid)
 
-**Seed pass — run when `chains_seeded_at` is null (a fresh or never-seeded dossier).** Work through the cube's oracle text systematically, archetype family by archetype family — mana engines (untappers, multipliers, cost reducers, free spells), graveyard loops, sacrifice/death-trigger loops, type-changers, tokens, spells-matter, tribal payoffs, lands-matter — and author a chain for **every engine you find**, not just the ones near the current pipeline candidates. This is deliberately broader than one deck's needs: the seed pass runs once per cube and every future session inherits it. When done, set `chains_seeded_at` to the current ISO 8601 UTC timestamp in `dossier.json`.
+Tags and cluster names cannot encode *"card A changes card B's type so card C can eat it"*. The dossier's `interaction_chains` is a hand-authored list of such compositions — useful for spotting engines during discovery. It is an **aid, not a gate**: a pipeline is not thinner for lacking a chain, and a shortlist `thesis` must never *require* a chain to exist. An engine you derive from oracle text during discovery is exactly as real as a listed one.
 
-**Incremental pass — every session:** read the oracle text of cards in and around the candidate pipelines; author any chain the seed pass missed.
-
-**The chain list is a floor, never a ceiling** (`dossier.chains_caveat`). A pipeline is not thinner for lacking a chain, and a shortlist `thesis` must never require a chain to exist — an engine you derive from oracle text during discovery is exactly as real as a seeded one. Queue it for the Phase 12 write-back and use it now.
+If, while reading oracle text around the candidate pipelines, you find an engine no chain records, you may add it to `dossier.interaction_chains` so future sessions inherit it. Only add compositions you can state as mechanism + oracle quotes — never verdicts.
 
 Chain format:
 
@@ -59,12 +60,10 @@ Chain format:
 }
 ```
 
-Rules, and they are strict:
+Rules:
 - `mechanism` **quotes oracle text** and states only how the cards compose. It is a claim that is true or false independent of any deck.
-- **No evaluation words.** Not "strong", "the key combo", "worth building around", "a trap". See the admissibility rule in IRON RULE 2.
-- Add chains, never verdicts. If you cannot express it as "A's text says X, B's text says Y, therefore Z is legal", it does not belong.
-- **`color_identity` is the minimum identity required to execute the CORE mechanism** — the cards without which the chain does not function — not the union of every card named. A redundant or alternative card in another colour (a second sacrifice outlet, an optional enabler, a fund-the-cost helper) is listed in `cards` and described in `mechanism` as optional, but it **must not widen** `color_identity`. Worked example: the `goblin-death-to-damage` chain runs on Pashalik Mons + Skirk Prospector + Mogg War Marshal, all mono-red, so its identity is `["R"]`; Goblin Turncoat is a black *alternative* outlet and does not make the chain `["B","R"]`. Widening the identity hides the engine from every deck in the narrower colours — exactly the deck the chain most helps.
-
+- **No evaluation words.** Not "strong", "the key combo", "worth building around", "a trap".
+- `color_identity` is the minimum identity required to execute the CORE mechanism — the cards without which the chain does not function — not the union of every card named. A redundant or alternative card in another colour is listed in `cards` and described in `mechanism` as optional, but it **must not widen** `color_identity`. (Widening the identity hides the engine from every deck in the narrower colours — exactly the deck the chain most helps.)
 
 ## Phase 2 Step 2 — Pipeline Discovery
 
@@ -121,7 +120,7 @@ Select the top 3–5 for the shortlist.
 
 `goldfish_turn` is the earliest realistic turn the kill mechanism executes against no resistance, derived from the mana math of the chain itself (oracle-grounded — never a meta claim). `default_role` is `aggressor` / `controller` / `combo`. Both are testable claims, not flavor: Phase 6b's assembly check and the Challenger's pipeline-viability check test the finished list against them.
 
-`thesis` is what makes two sub-archetypes of the same payoff *distinguishable*. It is oracle-grounded and evaluation-free, exactly like `interaction_chains` — **state the mechanism, never the verdict.** Two shortlist entries whose theses do not name different kill mechanisms or different interaction chains are the same pipeline wearing two names — merge them rather than presenting a false choice.
+`thesis` is what makes two sub-archetypes of the same payoff *distinguishable*. State the mechanism, never the verdict. Two shortlist entries whose theses do not name different kill mechanisms or different interaction chains are the same pipeline wearing two names — merge them rather than presenting a false choice.
 
 If fewer than 3 viable pipelines exist, include all viable ones without padding.
 
@@ -129,8 +128,6 @@ If no viable pipelines exist, report:
 > "No viable pipelines found in the current pool."
 
 Ask whether to lower the viability threshold or change pool rules (restart Phase 0).
-
-Tag density is still shown as context (count of Enabler/Fodder and Engine/Outlet per synergy cluster), but strategy selection is driven by the pipeline shortlist, not tag density alone.
 
 ## Phase 3 — Splash Evaluation
 
@@ -144,9 +141,7 @@ If qualified candidates exist, set `splash_colors` to the list of off-color lett
 
 Do not present this evaluation to the user or ask for confirmation. Both criteria above are deterministic — this is a filter, not a judgment.
 
-`core_colors`, `splash_colors` and `splash_candidates` define the pool tiers in Phase 5A; `core_colors` and `splash_colors` are also arguments to `deck_audit.mana_audit()` (Phase 6).
-
-**`splash_candidates` is what bounds `legal_pool`.** A splash colour never admits its whole colour — only these named cards. Ignoring this ships ~100 unusable cards per splash colour, since only 3 of them can ever be legally included.
+`core_colors`, `splash_colors` and `splash_candidates` bound the buildable pool in Phase 5; `core_colors` and `splash_colors` are also arguments to `deck_audit.mana_audit()` (Phase 6). A splash colour never admits its whole colour — only the named `splash_candidates`.
 
 ## Phase 4 — Commander Selection (Commander formats only)
 

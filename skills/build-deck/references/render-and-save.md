@@ -1,6 +1,6 @@
 # build-deck reference — Phases 10–11: render & save specs
 
-Read at the start of Phase 10; covers the display template, format rules, the analysis validator checks, and every saved-file spec. Mechanics only — the binding rules (analysis firewall, derive-never-type, hard-failure handling) are in SKILL.md.
+Read at the start of Phase 10; covers the display template, format rules, the analysis validator, and every saved-file spec. Mechanics only — the binding rules (derive-never-type header counts, no external links) are in SKILL.md.
 
 ## Phase 10 — display template
 
@@ -45,23 +45,17 @@ DECK IDENTITY
 {2–4 sentences: the strategy, the win condition, the key interaction.
  Use build_output.deck_identity. This subsection is ALWAYS first.}
 
-{Then write freely — about THIS deck only. Surface the most interesting
+{Then write freely — about THIS deck. Surface the most interesting
 strategic observations: synergy interactions, mechanical calculations,
 matchup notes, play patterns, key card interactions. Use tables when
 they add clarity. Minimum one substantive observation.}
 
-QUANTITATIVE VERDICTS
-{The build_output.quantitative_verdicts table, reproduced as-is:
- card | claim | numerator/denominator | verdict.}
-
 STRUCTURAL CHECKS
 {deck_checks.format_checks_report(build_output.structural_checks), followed by
- one line per structural_responses entry. Reproduced as-is, never re-authored.}
+ one line per structural_responses entry.}
 
 CARDS CONSIDERED BUT EXCLUDED
-{GENERATED from sweep.json: every EXCLUDE_CONSIDERED entry, reproduced
- as-is — card | reason. Never re-authored, never editorialised, never
- supplemented from memory.}
+{The sweep's considered_but_excluded entries, reproduced as card | reason.}
 
 MANA AUDIT: {PASS/WARN/FAIL}
 ──────────────────────────────────────────────────────────────────
@@ -81,27 +75,22 @@ RESTRICTIONS COMPLIANCE
 - Rarity abbreviation: C Common, U Uncommon, R Rare, M Mythic
 - `Color` column value is the card's base mana cost colors from the `colors` field (not `color_identity`); kicker pips are excluded; CubeCobra single-letter notation: `B`, `R`, `BR`, `GU`, `C` (colorless); pad all Color values to the same column width for alignment
 - **Canonical section names for analysis.md** (strict — do not rename or reorder): `## MAINBOARD`, `## SIDEBOARD`, `## ANALYSIS`, `## MANA AUDIT: {PASS|WARN|FAIL}`, `## RESTRICTIONS COMPLIANCE`; sub-headers: `### LANDS`, `### CREATURES`, `### INSTANTS & SORCERIES`, `### OTHER SPELLS`
-- **`## ANALYSIS` always opens with `### DECK IDENTITY`** before any other content. Order within `## ANALYSIS`: `### DECK IDENTITY` → free-form observations → `### QUANTITATIVE VERDICTS` → `### STRUCTURAL CHECKS` → `### CARDS CONSIDERED BUT EXCLUDED` → `### COLOR ALLOCATION OBSERVATION` (only if the Challenger raised one) → any remaining subsections.
-- **`### COLOR ALLOCATION OBSERVATION`** reproduces the Challenger's `color_allocation_observation` verbatim, prefixed with one line stating that the deck was built in the colours the user locked and that nothing acted on the observation. It is advisory only — the deck on the page is the deck that was agreed.
+- **`## ANALYSIS` always opens with `### DECK IDENTITY`** before any other content. Order within `## ANALYSIS`: `### DECK IDENTITY` → free-form observations → `### STRUCTURAL CHECKS` → `### CARDS CONSIDERED BUT EXCLUDED` → any remaining subsections.
 - **No Scryfall links. No external links of any kind.** Card names are plain text everywhere — in every card table, in the ANALYSIS body, and in `analysis.md`. Do not wrap card names in markdown links.
 
 ## Phase 10 — analysis validator (`_tmp_validate_analysis.py`)
 
-Verification step 2 of "derive, then verify" (step 1, **Derive, never type**, is in SKILL.md):
+After writing `analysis.md`, run a light re-parse that asserts:
+- each section's summed `Qty` equals the number in that section's own header;
+- `spells + lands == total` in the `## MAINBOARD` header;
+- the section totals sum to the mainboard/sideboard counts in `deck.json`;
+- `analysis.md` contains zero occurrences of `scryfall`.
 
-2. **Verify after writing.** Run `_workspace/<run-token>/attempt-<k>/_tmp_validate_analysis.py` against the written `analysis.md`. It re-parses the file and asserts:
-   - each section's summed `Qty` equals the number in that section's own header;
-   - `spells + lands == total` in the `## MAINBOARD` header;
-   - the section totals sum to the mainboard/sideboard counts in `deck.json`;
-   - `analysis.md` contains zero occurrences of `scryfall`;
-   - **firewall check:** every cube card name appearing anywhere in `## ANALYSIS` is in this deck or its `legal_pool` (scan against the full working-pool name list; a `cube_index` name is allowed only inside the sideboard/threat discussion of the body and the `## SIDEBOARD` section);
-   - **generation check:** the `### CARDS CONSIDERED BUT EXCLUDED` rows equal the sweep's `EXCLUDE_CONSIDERED` entries exactly — same cards, same reasons, none added or dropped.
-
-   Any mismatch is a **hard failure**: regenerate `analysis.md` from the deck arrays and sweep. Never hand-patch the output to make the validator agree.
-
-This check runs on **every** write of `analysis.md`, including every regeneration after a deck change.
+Any mismatch is a **hard failure**: regenerate `analysis.md` from the deck arrays. Never hand-patch the output to make the validator agree. This runs on every write of `analysis.md`.
 
 ## Phase 11 — saved-file specs
+
+Four files, all into `cubes/<id>/decks/<name>/`.
 
 **Write deck.json** using the Write tool to `cubes/<id>/decks/<name>/deck.json`:
 ```json
@@ -117,7 +106,6 @@ This check runs on **every** write of `analysis.md`, including every regeneratio
   "restrictions": { ... },
   "commander": null,
   "mana_audit": { ... },
-  "dossier_sha256": "<the frozen dossier hash from Phase 2>",
   "mainboard": [ {card dicts, board: "mainboard"} ],
   "sideboard": [ {card dicts, board: "sideboard"} ]
 }
@@ -151,10 +139,6 @@ The function writes to `cubes/<id>/decks/<name>/deck.mwDeck` automatically.
 
 ---
 
-**Copy sweep.json** — the final attempt's `_workspace/<run-token>/attempt-<k>/sweep.json` (updated through any grill repairs) is copied to `cubes/<id>/decks/<name>/sweep.json`. It is the auditable record that every legal-pool card was freshly evaluated for this deck.
-
----
-
 **Write analysis.md** using `exporter.write_deck_analysis_md(analysis_text, short_id, deck_name, frontmatter)`:
 
 The saved file MUST follow this exact structure. Section order is strict — do not reorder, rename, or omit any section.
@@ -181,7 +165,7 @@ restrictions_status: "<PASS|FAIL>"
    - `### INSTANTS & SORCERIES ({N})` — card table in a fenced code block; omit if empty
    - `### OTHER SPELLS ({N})` — card table in a fenced code block; omit if empty
 2. `## SIDEBOARD ({N})` — card table in a fenced code block
-3. `## ANALYSIS` — free Markdown body (NOT in a code block). **MUST open with `### DECK IDENTITY`** before any other content. Then free-form observations — at least one substantive, scoped to this deck's run only (see the analysis firewall). Then `### QUANTITATIVE VERDICTS` (reproduced as-is), then `### STRUCTURAL CHECKS` (the `format_checks_report` output in a fenced code block plus any `structural_responses` lines, reproduced as-is), then `### CARDS CONSIDERED BUT EXCLUDED` (generated from sweep.json), then `### COLOR ALLOCATION OBSERVATION` if the Challenger raised one.
+3. `## ANALYSIS` — free Markdown body (NOT in a code block). **MUST open with `### DECK IDENTITY`**, then free-form observations (at least one substantive), then `### STRUCTURAL CHECKS` (the `format_checks_report` output in a fenced code block plus any `structural_responses` lines), then `### CARDS CONSIDERED BUT EXCLUDED` (the sweep's `considered_but_excluded` entries).
 4. `## MANA AUDIT: {PASS|WARN|FAIL}` — audit report in a fenced code block
 5. `## RESTRICTIONS COMPLIANCE` — checklist in a fenced code block
 
@@ -189,7 +173,7 @@ Card table columns in fenced code blocks: `CMC  Card  Qty  Color  Role  Rar` (ma
 
 **No Scryfall links. No external links of any kind.** Card names are plain text in every fenced code block table and throughout the `## ANALYSIS` body.
 
-**Header counts are derived and then verified.** Every `({N})` in a section header is computed from the deck arrays (sum of `qty`), never hand-written. After writing `analysis.md`, run `_tmp_validate_analysis.py` (see Phase 10) and confirm every check passes, including the firewall and generation checks. A mismatch is a hard failure — regenerate the file; never hand-patch the number.
+**Header counts are derived and then verified.** Every `({N})` in a section header is computed from the deck arrays (sum of `qty`), never hand-written. After writing `analysis.md`, run `_tmp_validate_analysis.py` (see Phase 10) and confirm every check passes. A mismatch is a hard failure — regenerate the file; never hand-patch the number.
 
 The `frontmatter` dict passed to `exporter.write_deck_analysis_md()`:
 ```python
@@ -203,4 +187,15 @@ The `frontmatter` dict passed to `exporter.write_deck_analysis_md()`:
     "mana_audit_status": audit["overall_status"],    # "PASS" / "WARN" / "FAIL"
     "restrictions_status": "PASS",  # or "FAIL" if any check failed
 }
+```
+
+---
+
+Confirm all four paths:
+```
+Saved:
+  cubes/<id>/decks/<name>/deck.json
+  cubes/<id>/decks/<name>/deck.tsv
+  cubes/<id>/decks/<name>/deck.mwDeck
+  cubes/<id>/decks/<name>/analysis.md
 ```
