@@ -98,11 +98,11 @@ State the active mode (and the parsed filter, if Guided) at the top of the final
 
 ## Step 1 — Aggregate Seeds
 
-Generate a run token unique to this invocation before writing anything — UTC timestamp + short random suffix, e.g. `run-20260709T041210-a3f9`:
+Generate a run token unique to this invocation AND atomically create its directory before writing anything. The token is a microsecond-precision UTC timestamp plus a full 32-char uuid4 hex — e.g. `run-20260709T041210123456-a3f9c1e2b4d64f7a8c9e0f1a2b3c4d5e`:
 ```
-python -c "import datetime,uuid; print('run-'+datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%S')+'-'+uuid.uuid4().hex[:4])"
+python -c "import datetime,uuid,os; t='run-'+datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')+'-'+uuid.uuid4().hex; os.makedirs(os.path.join('cubes','<slug>','_workspace',t)); print(t)"
 ```
-This keeps concurrent runs on the same cube from colliding on the same filename.
+This prints the token AND creates `cubes/<slug>/_workspace/<run-token>/`. `os.makedirs` runs with the default `exist_ok=False`, so it fails with `FileExistsError` if that directory already exists — a collision signal that another concurrent run grabbed the same token. If the command errors, run it again (it mints a fresh token every invocation); retry up to 3 times, then stop and report rather than reusing the directory. Never create the directory by hand or with `exist_ok=True`. The high-entropy token keeps concurrent runs on the same cube from colliding on the same filename or overwriting each other's files.
 
 Write a small script to `cubes/<slug>/_workspace/<run-token>/aggregate_seeds.py` that reads
 `cubes/<slug>/enriched.json` and buckets mainboard cards by taxonomy, so you're reasoning over

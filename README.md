@@ -246,8 +246,6 @@ The `<id>` argument accepts either the CubeCobra short ID (e.g. `obc`) or the lo
 | `fetch-set <code>` | Fetch every card from a retail set and create a full cube project. | `cuber fetch-set eoe` |
 | `fetch-set <code> --include-basics` | Include basic lands. | `cuber fetch-set dmu --include-basics` |
 
-**Deck comparison (acceptance testing):** `scripts/make_judge_bundle.py` assembles a blinded A/B bundle from two saved deck folders (origin-identifying fields stripped, labels randomized, hash printed) for cold-agent judge comparisons used to accept or reject `/build-deck` changes; run it with `--help` for usage.
-
 ---
 
 ## How Export Works
@@ -317,29 +315,13 @@ Builds a deck from your cube in any supported format. Uses a discovery-first app
 **Phase flow:**
 - **Phase 0 — Card Pool Definition:** Mints a collision-safe run token and creates this run's private `_workspace/<run-token>/` directory (concurrent runs can never touch each other's files), then optionally restricts the pool (copy limits per rarity, specific card exclusions). The skill infers a `card_pool_rules` object from natural language and confirms before proceeding.
 - **Phase 1 — Interview:** Cube, format, optional color preference, intent (Competitive / Experimental / Fun / Specific Constraint), power level.
-- **Phase 2 — Discovery:** Builds/loads the **cube dossier** (`cuber dossier <id>`), then finds Payoff candidates via `taxonomic_profile.structural_roles`, validates each against Enabler/Fodder and Engine/Outlet counts per `synergy_clusters`, and produces a viable pipeline shortlist. Also authors the dossier's `interaction_chains` — oracle-grounded card combinations that tags alone cannot express ("card A changes card B's type so card C can eat it").
+- **Phase 2 — Discovery:** Builds/loads the **cube dossier** (`cuber dossier <id>`), then finds Payoff candidates via `taxonomic_profile.structural_roles`, validates each against Enabler/Fodder and Engine/Outlet counts per `synergy_clusters`, and produces a viable pipeline shortlist. The dossier's `interaction_chains` — oracle-grounded card combinations that tags alone cannot express ("card A changes card B's type so card C can eat it") — are an optional discovery aid.
 - **Phase 3 — Strategy Selection:** Shows the shortlist with a recommendation based on your intent. You accept, pick another, or describe your own constraint.
 - **Phase 4 — Commander Selection** (commander formats only): finds valid commanders, handles partners.
-- **Phase 5 — Deck Build:** The orchestrator builds the deck — after a mandatory **Fresh-Eyes Sweep** in which every card in the deck's legal pool gets a recorded, fresh verdict scoped to *this* deck (saved as `sweep.json`; this is what prevents a card rejected for a previous deck from being silently skipped). All slot allocations are expressed as proportions of deck size N, with rationale for each. Mana sources are derived from pip demand. Every count a build cites (cards a cost-reducer discounts, Island-typed lands, mana sources, subtype counts) is computed by one shared module, `cuber/deck_counts.py`, and stored as a spec-backed `quantitative_verdicts` entry — never hand-typed into prose. A deterministic pre-flight validator recomputes those counts with the *same* module and rejects any that disagree, plus any stray ratio count in a `role`/`reason`/`claim` string, so a stale number can never reach the grill.
+- **Phase 5 — Deck Build:** The orchestrator builds the deck after a **lightweight sweep** — a short record of the include candidates plus a bounded "considered but excluded" list, so no strong card is silently skipped and the analysis can show what was weighed. All slot allocations are expressed as proportions of deck size N, with rationale for each; mana sources are derived from pip demand. Any inclusion or rejection whose value turns on how many other cards qualify (cost reducers, tribal/type-matters payoffs, threshold, storm count) is stated as an actual count against *this* list — a numerator and a denominator, never an adjective. A deterministic pre-flight validator checks deck size, exact-name membership, copy limits, colour identity, and the splash cap before the grill.
 - **Phase 6b — Structural Gate:** four checks mechanized from the deck-building methodology in `cuber/deck_checks.py`: **assembly** (critical-mass math — every engine role must be seen with p ≥ 0.75 by the thesis turn; hard gate; functional copies carry per-copy **reliability weights**, so a conditional effect — a tutor whose cost can eat the fetched piece, a cast-from-hand-only trigger — is discounted rather than counted whole, with the justification recorded and audited), **coverage** (the maindeck declares an answer or a written concession for each of five threat classes; hard gate), **curve shape** (per-archetype MV bands plus a top-end rule; WARN-tier) and a **goldfish simulation** (seeded Monte Carlo keepability/curve-out; WARN-tier). WARNs require a recorded response, not a rebuild. The pipeline thesis now carries a `goldfish_turn` and `default_role` these checks test against.
-- **Phases 6–9:** Mana audit, sideboard, grill bundle, self-grill: a single cold-context **Challenger agent** audits the deck from a hashed bundle — hard legality checks, an exhaustive per-card oracle defense (INDEFENSIBLE list), quantitative-verdict recounts, and an **absence audit** ("what strong pool card is missing?") from a context that has never seen another deck — derived oracle-text-first, with engines that no `interaction_chains` entry records reported as new chain candidates for the session-end write-back. The orchestrator adjudicates findings; legality violations, audit regressions, and counts that fail to reproduce are non-negotiable. One grill round by default; a second only on a hard finding.
-- **Re-evaluation:** If the self-grill challenger declares a pipeline fundamentally broken, the skill automatically tries the next pipeline from the Phase 3 shortlist without restarting discovery. A *colour-allocation* observation, by contrast, is advisory only — the deck is always built in the colours you locked.
-
-**Isolation model — what crosses between decks, and what never does.** The orchestrator builds warm
-(it knows the cube); decks stay isolated by three guards, not by a cold builder:
-
-| Knowledge | Scope | Crosses between decks? |
-|---|---|---|
-| Cube facts, interaction chains, pool limits | the cube | **Yes** — via the dossier |
-| Card-quality verdicts | the (card, list) pair | **Never** — the Fresh-Eyes Sweep forces every legal-pool card to be re-evaluated fresh per deck |
-| Grill findings, repair lessons, build narratives | one deck's run | **Never** — and the analysis firewall keeps them out of the output |
-
-The dossier is frozen *before the first deck is built* (new interaction chains are written back only
-at session end), so it is structurally incapable of carrying a finding about any deck, and every deck
-in a session embeds the same `dossier_sha256`. Together with the sweep and the cold Challenger's
-absence audit, that is what lets you build many decks in one session without deck 2 inheriting deck
-1's conclusions — a cost reducer correctly cut from a deck whose kill is an activated ability must be
-**re-evaluated from scratch** for the next deck, where it may discount most of the list.
+- **Phases 6–9:** Mana audit, sideboard, grill bundle, self-grill: two agents run in parallel from the grill bundle — a **Proposer** that defends every card with an oracle quote, and a **Challenger** that attacks the deck independently (hard legality checks, per-card oracle verification, a **derivation audit** that recomputes the land/pip math and recounts every count-dependent verdict, and an **absence audit** that asks "what strong pool card is missing?" oracle-text-first). The orchestrator adjudicates findings; legality violations, audit regressions, structural-gate hard failures, and counts that fail to reproduce are non-negotiable.
+- **Re-evaluation:** If the Challenger declares a pipeline fundamentally broken, the skill automatically tries the next pipeline from the Phase 3 shortlist without restarting discovery.
 
 **Example:** `/build-deck obc` → "40-card, Competitive intent, surprise me on colors"
 

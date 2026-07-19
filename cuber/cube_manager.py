@@ -892,7 +892,6 @@ def _package_card_to_enriched_card(card: Dict[str, Any]) -> Card:
         power=src.get("power"),
         toughness=src.get("toughness"),
         mana_cost=src.get("mana_cost"),
-        tags=[str(t) for t in (src.get("tags") or []) if t],
     )
 
 

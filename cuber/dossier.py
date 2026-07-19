@@ -93,11 +93,7 @@ _MANA_COLOR_RE = re.compile(r"\{([WUBRGC])\}")
 
 
 def land_colors(oracle: str) -> List[str]:
-    """Colours a land can add, in WUBRG(+C) order. Captures 'or'/comma alternation.
-
-    Public and shared: `cuber.deck_counts.pip_sources` counts a deck's mana sources through this
-    same function, so the census and the deck-count validator agree by construction.
-    """
+    """Colours a land can add, in WUBRG(+C) order. Captures 'or'/comma alternation."""
     colors = set()
     for clause in _ADD_CLAUSE_RE.finditer(oracle):
         colors.update(_MANA_COLOR_RE.findall(clause.group(1)))
@@ -198,7 +194,15 @@ def _mana_infrastructure(cards: List[Card]) -> Dict[str, Any]:
 
     for c in lands:
         oracle = _text(c)
-        by_identity[_color_key(c)].append({
+        produces = land_colors(oracle)
+        # Bucket a land by the colours it actually TAPS FOR, not its colour identity:
+        # a manland like Nantuko Monastery has a G/W identity from its {G}{W} animation
+        # cost but adds only {C}, so under mana-infrastructure it belongs under 'C', not
+        # 'GW'. Lands that tap for no colour (Maze of Ith) fall under 'C' as well. This
+        # matches how duals_by_pair below counts fixing (on `produces`), so the two agree.
+        colored = [x for x in produces if x in "WUBRG"]
+        mana_key = "".join(x for x in "WUBRG" if x in colored) if colored else "C"
+        by_identity[mana_key].append({
             "name": c.name,
             "rarity": c.rarity,
             "type_line": c.type_line,
@@ -207,7 +211,7 @@ def _mana_infrastructure(cards: List[Card]) -> Dict[str, Any]:
             # A Lair returns a land to hand to stay — it swaps a land rather than adding one,
             # so it does not raise your battlefield land count.
             "self_bounce": bool(_SELF_BOUNCE_LAND_RE.search(oracle)),
-            "produces": land_colors(oracle),
+            "produces": produces,
         })
 
     # Dual availability per colour pair — the fixing question, stated as counts only.
@@ -216,10 +220,13 @@ def _mana_infrastructure(cards: List[Card]) -> Dict[str, Any]:
     for a_i, a in enumerate("WUBRG"):
         for b in "WUBRG"[a_i + 1:]:
             pair = a + b
+            # Match on what the land actually TAPS FOR (`produces`), not its colour
+            # identity: a manland like Nantuko Monastery has a G/W identity from its
+            # activation cost but adds only {C}, so it is not a fixing source for WG.
             matches = [
-                land for key, group in by_identity.items()
+                land for group in by_identity.values()
                 for land in group
-                if a in key and b in key
+                if a in land["produces"] and b in land["produces"]
             ]
             free = [m for m in matches if not m["self_bounce"]]
             pairs[pair] = {

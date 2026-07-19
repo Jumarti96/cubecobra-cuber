@@ -1,47 +1,33 @@
 # build-deck reference — Phases 5–6b: build mechanics
 
-Read at the start of Phase 5; covers pool tiers, sweep file shapes, the seven-step build procedure, quantitative-verdict specs, the 5D checks, and the Phase 6b invocation. Mechanics only — the binding rules (sweep rules, gate semantics, IRON RULES) are in SKILL.md.
+Read at the start of Phase 5; covers the lightweight sweep, the seven-step build procedure, the pre-flight checks, and the Phase 6b structural-gate invocation. Mechanics only — the IRON RULE, the Counts Principle, and the gate semantics are in SKILL.md.
 
-## Phase 5A — pool tiers (`pool_tiers.json`)
+The build works from the whole filtered pool (the working pool cache), bounded by `core_colors`, `splash_colors`, and the named `splash_candidates`. There is no separate legal/index split — the grill bundle ships the full `working_pool`, and the sideboard and absence audit see the rest of the cube through it.
 
-| Key | Contents | Why it exists |
-|-----|----------|---------------|
-| `legal_pool` | **Full records incl. `oracle_text`** for: every card with `color_identity ⊆ core_colors`, **plus** all lands, **plus** all colourless cards, **plus** the bounded `splash_candidates` list from Phase 3 — and nothing else | The sweep's domain, and the Challenger's evidence base. Every include, every oracle citation, every swap must come from here |
-| `cube_index` | The **disjoint complement** of `legal_pool` — every cube card *not* in it. Fields: `name`, `colors`, `color_identity`, `cmc`, `type_line`, `rarity`, `tags`. **No `oracle_text`, no `taxonomic_profile`** | What the *opponent* can do; spotting a dead colour. Cheap. |
+## Phase 5A — lightweight sweep
 
-**Precompute per `legal_pool` card** (machine-derived; this is what every audit otherwise re-scripts): `pips` — a dict of colored-pip counts from `mana_cost` (e.g. `{"U": 2}`); `has_generic` — whether the mana cost contains a generic component; `subtypes` — creature subtypes from `type_line`.
-
-**`legal_pool` and `cube_index` are disjoint, and their union is the whole cube.** Never ship a card in both — that duplication once made a 4-colour bundle 78% *larger* than shipping the raw pool. **Sanity-check before proceeding:** if `len(legal_pool) + len(cube_index) != len(working_pool)`, the tiers overlap or drop cards — fix it before anything else runs.
-
-**Never filter to on-colour cards alone.** A sideboard is built against the *rest of the cube*: "there is no artifact removal in mono-red — every answer in this cube is W/G/multicolour" is a fact you can only see with the whole cube in view. `cube_index` + `dossier.threat_profile` is what makes that possible without paying for 271 oracle texts.
-
-## Phase 5B — sweep entry and file shapes
-
-Each `legal_pool` card gets one entry:
-
-```json
-{
-  "card": "High Tide",
-  "verdict": "INCLUDE | EXCLUDE_CONSIDERED | EXCLUDE_OFFPLAN",
-  "reason": "<one line, grounded in this card's oracle_text and THIS deck's pipeline>"
-}
-```
-
-Sweep rule 5 (rules 1–4 are in SKILL.md):
-5. Write the result to `_workspace/<run-token>/attempt-<k>/sweep.json`:
+Record a short sweep before committing the list. It is **not** a total-coverage record of every pool card — only two bounded lists:
 
 ```json
 {
   "run_token": "run-…",
-  "attempt": 1,
   "pipeline_payoff": "<name>",
   "swept_at": "<ISO 8601 UTC>",
-  "legal_pool_count": 138,
-  "entries": [ … ]
+  "include_candidates": [
+    { "card": "High Tide", "reason": "<one line, grounded in this card's oracle_text and THIS pipeline>" }
+  ],
+  "considered_but_excluded": [
+    { "card": "Helm of Awakening", "reason": "<one-line mechanism; count-dependent claims obey the Counts Principle>" }
+  ]
 }
 ```
 
-## Phase 5C — the seven build steps
+- `include_candidates` — the cards you are building from. One oracle-grounded line each, scoped to this pipeline.
+- `considered_but_excluded` — a **bounded** list of cards a reader would reasonably expect in this deck that you rejected. Not every off-plan card in the pool; the ones worth explaining. Each gets a one-line mechanism reason. This list becomes the `### CARDS CONSIDERED BUT EXCLUDED` section of the analysis (Phase 10).
+
+Write it to `_workspace/<run-token>/sweep.json` (kept in the workspace; it is not a saved deck file).
+
+## Phase 5B — the seven build steps
 
 **1. CLASSIFY.** Choose one macro-archetype that fits the pipeline: Tempo / Combo / Aggro / Midrange / Control. State the classification and the projected average MV.
 
@@ -67,47 +53,30 @@ The ranges are guidance; the rationale must justify any deviation.
 
 Read `dossier.mana_infrastructure` before choosing the mana base — `enters_tapped`, `conditionally_tapped` and `self_bounce` are flags the audit cannot see. A self-bouncing land swaps a land rather than adding one.
 
-**4. MANA SOURCES.** Count colored pips across core-color cards only (the precomputed `pips` field). Compute each core color's pip share. Distribute producing lands proportionally. If `splash_colors` is non-empty, allocate 2–3 dedicated sources per splash color out of the remaining land slots; splash pips are excluded from the proportional math. State the pip counts and the derived split:
+**4. MANA SOURCES.** Count colored pips across core-color cards only. Compute each core color's pip share. Distribute producing lands proportionally. If `splash_colors` is non-empty, allocate 2–3 dedicated sources per splash color out of the remaining land slots; splash pips are excluded from the proportional math. State the pip counts and the derived split:
 
 > "14 blue pips, 8 black pips (64% / 36%). Targeting 11 blue sources and 6 black sources out of 17 total lands."
 
-**5. FILL.** For every card: quote `oracle_text` from `legal_pool` before including it; verify against `card_pool_rules`; build a running restrictions checklist.
+**5. FILL.** For every card: quote `oracle_text` from the working pool cache before including it; verify against `card_pool_rules`; build a running restrictions checklist.
 
-**6. QUANTITATIVE VERDICTS (IRON RULE 3).** Every count-dependent inclusion or rejection is recorded — and **a count is computed by `cuber.deck_counts`, never typed by hand**. Each verdict carries the integer AND the recipe that produced it:
+**6. COUNT-DEPENDENT VERDICTS (the Counts Principle).** For every inclusion or rejection whose value turns on how many other cards qualify (cost reducers, tribal/type-matters payoffs, storm/spell-count triggers, graveyard counts, devotion, threshold, metalcraft, delirium, domain, affinity), state the count as a numerator/denominator against **this deck's list** — not an adjective. Compute it against the mainboard you actually built; if you later swap a card and a denominator moves, recount.
 
-```json
-{
-  "card": "Helm of Awakening",
-  "claim": "discounts every nonland card with a generic component in its cost",
-  "numerator": 18, "numerator_spec": { "predicate": "generic_reducible", "args": [["Helm of Awakening"]] },
-  "denominator": 25, "denominator_spec": { "predicate": "nonland", "offset": -1 },
-  "verdict": "INCLUDE"
-}
-```
-
-- `numerator` / `denominator` are the return values of `deck_counts.resolve(deck, spec)` on **this deck's mainboard array** — compute them, do not transcribe them.
-- `numerator_spec` / `denominator_spec` are the machine-readable recipes. A spec is `{ "predicate": <name>, "args": [...], "offset": <int> }`, or a bare int for a fixed literal (e.g. a target deck size). `offset` expresses a relative count such as `nonland - 1` (cards other than this one). Predicates: `nonland`, `lands`, `zero_cost`, `instants_sorceries`, `subtype_count(sub)`, `type_typed_lands(land_type)`, `generic_reducible(exclude_names)`, `color_cards(color)`, `pip_sum(color)`, `pip_sources(color)`, `oracle_matches(regex)`. Add a predicate to `cuber/deck_counts.py` if you need one that does not exist — never inline a bespoke recount.
-- `claim` **names the predicate in words, with no count digits** (write "discounts every nonland card with a generic component", not "discounts 17 of 25"). The number lives only in the machine-checked `numerator`/`denominator`. This is what makes the count un-stale-able: there is exactly one copy of it, and Phase 5D recomputes it from the spec.
-
-If you later swap a card and a denominator moves, the spec still recomputes correctly — re-run `deck_counts` and update the stored integers; never leave a transcribed number behind.
-
-**The `*_spec` fields are builder-internal — strip them from the grill bundle (Phase 8).** The Challenger recounts every verdict independently against the deck array (its check 13); handing it the recipe would let it re-run your code instead of verifying you, defeating the cold check. Ship only `card`/`claim`/`numerator`/`denominator`/`verdict` to the Challenger; keep the specs in `build_output.json` on disk for the Phase 5D validator.
+> "Helm of Awakening discounts every nonland card with a generic component: 18 of the 24 nonland cards qualify. INCLUDE."
 
 **7. Record your derivation** as `build_output` (this feeds the grill bundle and Phase 10):
-`macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `thesis_turn` and `default_role` (copied from the locked pipeline's thesis), `slot_allocation`, `land_math`, `pip_math`, `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `quantitative_verdicts`, `restrictions_checklist`. Phase 6b appends `structural_checks`, `structural_responses`, `coverage`, and `failure_modes`.
+`macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `thesis_turn` and `default_role` (copied from the locked pipeline's thesis), `slot_allocation`, `land_math`, `pip_math`, `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `restrictions_checklist`. Phase 6b appends `structural_checks`, `structural_responses`, `coverage`, and `failure_modes`.
 
-## Phase 5D — the eight deterministic checks
+## Phase 5C — the pre-flight checks (deterministic)
+
+Write `_workspace/<run-token>/_tmp_validate_build.py` and run these before the grill. Every check is a string or number comparison — none is a judgment:
 
 1. Mainboard count (summing `qty`) == `deck_size` (+ commander). Sideboard == `sideboard_size`.
-2. Every `name` exists by **exact string match** in `legal_pool`.
+2. Every `name` exists by **exact string match** in the working pool cache.
 3. Copy counts obey `card_pool_rules` — cross-check with `cube_search.get_max_copies`.
 4. Every nonland `color_identity` ⊆ `core_colors` ∪ `splash_colors` (or the commander's identity).
-5. ≤ 3 cards for each splash color.
-6. Quantitative verdicts reproduce — call `deck_counts.check_verdicts(mainboard, quantitative_verdicts)`; it recomputes every `numerator`/`denominator` from its `*_spec` and returns the mismatches. A non-empty result fails the check. This is the **same `cuber.deck_counts` code the build used**, so a passing check means the stored integer and its recipe agree by construction — not two hand-written recounts that might both be wrong.
-7. Sweep coverage — every `legal_pool` name appears exactly once in `sweep.json`; `legal_pool_count` matches.
-8. No ratio counts in prose — for every mainboard/sideboard `role`, every `sweep.json` `reason`, and every verdict `claim`, `deck_counts.count_digits_in_prose(text)` returns empty. A ratio frame ("17 of the 25", "8 Island-typed", "out of 16 lands") means a number was hand-typed where a spec-backed verdict belongs — promote it to a `quantitative_verdicts` entry or reword qualitatively. Intrinsic card numbers ({R}{R}, "4 damage", "creates 10 Goblins") are not flagged; the guard catches ratio prose, and check 6 is the primary guarantee for every load-bearing count.
+5. ≤ 3 cards for each splash color, and every splashed card is in `splash_candidates`.
 
-Both new checks import the shared module: `from cuber import deck_counts`. The build script and this validator therefore run identical counting logic — the guarantee is that they cannot disagree, so a stale count can never reach the grill.
+Fix any failure directly (you built the deck; you repair it), then re-run until all pass. Do not proceed to Phase 6 with a failing check, and never hand-patch a validator to make it agree.
 
 ## Phase 6b — structural gate invocation
 
@@ -115,7 +84,7 @@ Both new checks import the shared module: `from cuber import deck_counts`. The b
 from cuber import deck_checks
 report = deck_checks.run_structural_checks(
     mainboard_cards,            # one dict per copy (expand qty)
-    macro_archetype,            # from Phase 5C step 1
+    macro_archetype,            # from Phase 5B step 1
     thesis_turn,                # from the locked pipeline's thesis
     role_counts,                # {"payoff": n | [copy entries], "enabler": ...} — functional copies, reliability-weighted
     coverage_declaration,       # see below
@@ -128,4 +97,8 @@ Display `deck_checks.format_checks_report(report)`.
 
 **Inputs you assemble first:** `role_counts` counts the mainboard cards whose assigned role is a pipeline payoff or enabler (functional copies, qty-expanded). A value is either a plain int (every copy fully reliable) or a per-copy list mixing `{"qty": k}` entries with weighted ones: `{"card": "<name>", "weight": 0.8, "why": "<mechanism>"}`.
 
-**Reliability weights are mandatory for conditional copies — effects in general, not just tutors.** A functional copy whose access or effect is conditional may not count as a full copy: a tutor whose cost can eat the fetched piece, a cast-from-hand-only trigger, an effect that needs another piece already on the battlefield, a symmetric effect the opponent can exploit first. Declare it at a weight below one with a one-line mechanism-grounded `why` — `assembly_check` raises on a discount without one. The weight is a builder claim, stated conservatively from oracle text; it ships inside `build_output.structural_checks`, where the Challenger's derivation audit sees both the number and the stated mechanism. IRON RULE 3's prose rule binds `why` strings: name the mechanism, no ratio-count digits. `coverage_declaration` maps each of the five threat classes — `wide_boards`, `single_large_threat`, `noncreature_permanents`, `stack`, `graveyard` — to either `{"cards": [<mainboard names>]}` or `{"conceded": "<one-line mechanism reason>"}`. A concession is legitimate (a fast enough clock answers everything) but it must be written; the cheapest lie is the class you never mention.
+**Reliability weights are mandatory for conditional copies — effects in general, not just tutors.** A functional copy whose access or effect is conditional may not count as a full copy: a tutor whose cost can eat the fetched piece, a cast-from-hand-only trigger, an effect that needs another piece already on the battlefield, a symmetric effect the opponent can exploit first. Declare it at a weight below one with a one-line mechanism-grounded `why` — `assembly_check` raises on a discount without one. The weight is a builder claim, stated conservatively from oracle text. Name the mechanism in `why`; no ratio-count digits.
+
+`coverage_declaration` maps each of the five threat classes — `wide_boards`, `single_large_threat`, `noncreature_permanents`, `stack`, `graveyard` — to either `{"cards": [<mainboard names>]}` or `{"conceded": "<one-line mechanism reason>"}`. A concession is legitimate (a fast enough clock answers everything) but it must be written; the cheapest lie is the class you never mention.
+
+The report is stored as `build_output.structural_checks` and ships in the grill bundle. **Assembly and coverage are HARD gates** (see SKILL.md Phase 6b): a failure is repaired and re-run, not rationalized. `curve` and `goldfish` are WARN-tier — each flag gets one line in `build_output.structural_responses`.
