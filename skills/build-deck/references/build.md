@@ -101,4 +101,30 @@ Display `deck_checks.format_checks_report(report)`.
 
 `coverage_declaration` maps each of the five threat classes — `wide_boards`, `single_large_threat`, `noncreature_permanents`, `stack`, `graveyard` — to either `{"cards": [<mainboard names>]}` or `{"conceded": "<one-line mechanism reason>"}`. A concession is legitimate (a fast enough clock answers everything) but it must be written; the cheapest lie is the class you never mention.
 
-The report is stored as `build_output.structural_checks` and ships in the grill bundle. **Assembly and coverage are HARD gates** (see SKILL.md Phase 6b): a failure is repaired and re-run, not rationalized. `curve` and `goldfish` are WARN-tier — each flag gets one line in `build_output.structural_responses`.
+## `build_output.failure_modes` — six entries, mitigation XOR accepted
+
+Reason through each mode against THIS deck. Mitigate only when doing so does not cost the deck's identity or winning plan — and when you don't mitigate, the acceptance states that cost. Each mode maps to exactly one of two shapes:
+
+```json
+"failure_modes": {
+  "flood":             {"mitigation": "<mechanism line naming the cards or plan that address it>"},
+  "screw":             {"accepted": "<what mitigating would cost the deck's identity or winning plan>"},
+  "decapitation":      {"mitigation": "..."},
+  "gas-out":           {"mitigation": "..."},
+  "raced":             {"accepted": "..."},
+  "disruption-fizzle": {"mitigation": "..."}
+}
+```
+
+| Mode | The question it answers |
+|------|------------------------|
+| `flood` | What do excess lands do here — what turns a surplus land into action? |
+| `screw` | Which hands are keepable on 2 lands, and what digs you out? |
+| `decapitation` | What is the line when the key piece is answered on sight? |
+| `gas-out` | What happens when the hand is empty? The storm/spell-count failure: the mana is there, the cards are not. What refuels a deck that must keep playing cards? |
+| `raced` | Against the fastest clocks in `dossier.threat_profile`, does this deck win or interact before it dies? |
+| `disruption-fizzle` | The critical turn meets one piece of interaction — a counterspell, removal mid-chain. Does the plan survive, retry, or fold? Distinct from `decapitation`: this is the key TURN being interacted with, not the key CARD being answered on sight. |
+
+A `mitigation` names the cards or plan in this list that address the mode, grounded in their oracle text. An `accepted` is legitimate — but it must state the identity/plan cost explicitly; "unlikely" or "not relevant here" is not a cost. The Challenger reviews all six as a checklist (its item 12); a missing mode or an empty reasoning is automatically UNSATISFIED and comes back as a BLOCKING finding.
+
+The structural-gate report is stored as `build_output.structural_checks` and ships in the grill bundle. **Assembly and coverage are HARD gates** (see SKILL.md Phase 6b): a failure is repaired and re-run, not rationalized. `curve` and `goldfish` are WARN-tier — each flag gets one line in `build_output.structural_responses`.

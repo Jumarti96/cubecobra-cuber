@@ -31,6 +31,23 @@ This binds every card whose value is a function of how many others qualify: cost
 
 ---
 
+## Phase Protocol — Announce, Then Work
+
+**Every phase opens with a banner line to the user, before any phase work:**
+
+> ▶ Phase <N> — <phase name>
+
+No banner, no phase. The banner is written the moment the phase begins — not retroactively, not batched with the next one. A phase whose banner never appeared is a phase that was skipped.
+
+**Subagent protocol (the Phase 9 agents):**
+
+1. When dispatching, announce it: `⏳ Dispatching Proposer + Challenger`.
+2. Every dispatch prompt mandates that the agent's report **open** with `=== <ROLE> REPORT — BEGIN ===` and **close** with `=== <ROLE> REPORT — END ===`.
+3. When a report returns, verify **both** markers are present before using anything in it. A report missing either marker is incomplete — announce that and re-dispatch that agent; never adjudicate from a partial report.
+4. After the check passes, announce: `✔ <role> report verified`.
+
+---
+
 ## Prerequisites
 
 ```
@@ -225,7 +242,7 @@ Run the structural checks (the deck-building methodology, mechanized — thresho
 - **HARD — treat like a mana-audit FAIL:** `assembly` (an engine role's P(seen by thesis turn) < 0.75 — either add functional copies, or the thesis turn was optimistic: revise it and say so) and `coverage` (missing class, phantom card name, empty concession). Repair and re-run. Assembly counts **reliability-weighted** copies: a conditional functional copy is declared at a weight below one with its mechanism, never counted as a full copy.
 - **WARN-tier — respond, don't rebuild:** `curve` and `goldfish`. Each WARN flag gets one line in `build_output.structural_responses` stating the mechanism-grounded reason the deviation is accepted.
 
-**Also record `build_output.failure_modes`** — one mechanism-grounded line each for **flood** (what do excess lands do here?), **screw** (which hands are keepable on 2 lands?), and **decapitation** (what is the line when the key piece is answered on sight?).
+**Also record `build_output.failure_modes`** — all six modes, none omitted: **flood**, **screw**, **decapitation**, **gas-out**, **raced**, **disruption-fizzle**. Each entry is exactly one of two shapes: a `mitigation` (mechanism-grounded, naming the cards or plan that address it) or an `accepted` (stating explicitly what mitigating would cost the deck's identity or winning plan). There is no third shape. Mode definitions and the JSON spec are in `references/build.md`. The Challenger reviews every entry as a checklist (its item 12); an entry it cannot accept is a BLOCKING finding.
 
 Store the full report as `build_output.structural_checks`. It ships in the grill bundle.
 
@@ -266,18 +283,28 @@ Both Phase 9 agents read only this file — never `enriched.json`, the working p
 
 ## Phase 9: Self-Grill (Hard Gate)
 
-**Read `references/challenger-template.md` now.** Spawn the two agents it describes — a Proposer that defends every card with an oracle quote, and a Challenger that attacks the deck independently and runs the full checklist (membership, oracle, restrictions, identity fit, better alternatives, proportional validation, sideboard cohesion, mana re-run, **derivation audit**, **absence audit**, and pipeline viability). Neither agent sees the other's output during generation.
+**Read `references/challenger-template.md` now.** Spawn the two agents it describes — a Proposer that defends every card with an oracle quote, and a Challenger that attacks the deck independently and runs the full checklist (membership, oracle, restrictions, identity fit, better alternatives, proportional validation, sideboard cohesion, mana re-run, **derivation audit**, **absence audit**, pipeline viability, and **failure-mode review**). Neither agent sees the other's output during generation. Both dispatches and both returned reports follow the subagent protocol in **Phase Protocol** — verify the BEGIN/END markers before adjudicating.
 
 ### Resolve Grill (you adjudicate)
 
-You built this deck, so you defend it and judge the Challenger's findings. The discipline is in *how*:
+You built this deck, so you defend it and judge the Challenger's findings. Every finding arrives tagged by the Challenger as **BLOCKING** (the deck cannot finalize while it stands) or **ADVISORY** (yours to decide on the merits). Resolution is a table, a repair, an approval round, and a gate — in that order:
 
-1. **Respond to every finding explicitly** — accept or reject, with an oracle-grounded reason or a recount. Silent dismissal is prohibited.
-2. **Hard findings force a repair, never a rebuttal:** a legality violation (a Phase 5C check), a mana-audit regression (audit falls below WARN), a structural-gate HARD failure, or a count that fails to reproduce.
-3. **Soft findings** (a card-swap opinion, an absence, a proportional-band deviation, a role-text quibble) you may accept or reject on the merits — verify each claim against oracle text first. But an absence finding naming a card whose oracle-grounded count you cannot rebut is a finding you accept.
-4. **Repair the deck yourself.** Apply accepted findings, recount any count-dependent verdict whose denominator moved, then re-run the Phase 5C validator, the Phase 6 audit, and the Phase 6b gate on the result.
+**1. The Resolution Table (required artifact — display it to the user).** One row per Challenger finding, no finding without a row:
 
-Final list must satisfy: every card in the cube + oracle text supports every role + audit ≥ WARN + Phase 5C all-PASS + Phase 6b HARD gates pass.
+| # | Finding | Severity | Decision | Grounds |
+|---|---------|----------|----------|---------|
+
+- `Severity` is the Challenger's tag, copied verbatim — never downgraded by you.
+- `Decision` is `IMPLEMENT` or `CONTEST`.
+- Hard findings — a legality violation (a Phase 5C check), a mana-audit regression (audit falls below WARN), a structural-gate HARD failure, a count that fails to reproduce — are always BLOCKING and always `IMPLEMENT`: repair, never rebuttal.
+- A BLOCKING finding may be CONTESTed only with an oracle quote or a reproduced count in `Grounds`. "Marginal", "fine as is", and other adjectives are not grounds. An absence finding naming a card whose oracle-grounded count you cannot rebut is `IMPLEMENT`.
+- ADVISORY findings: decide on the merits with one-line grounds — verify each claim against oracle text first. No approval needed.
+
+**2. Repair the deck yourself.** Apply every `IMPLEMENT` row, recount any count-dependent verdict whose denominator moved, then re-run the Phase 5C validator, the Phase 6 audit, and the Phase 6b gate on the result.
+
+**3. Approval round** (skip only when the Challenger reported zero BLOCKING findings). Send the Resolution Table plus the updated deck list back to the **same Challenger agent** (SendMessage — its context is intact; do not spawn a fresh one). It returns a verdict per BLOCKING finding: RESOLVED or UNRESOLVED with a one-line reason. Any UNRESOLVED verdict → one more repair + review round. **Cap: two review rounds.** BLOCKING findings still UNRESOLVED after round two are escalated to the user with both sides' reasoning; the user rules.
+
+**4. Finalization gate.** Phase 10 is reachable only when every BLOCKING finding is RESOLVED — or the user has ruled on it — AND the final list satisfies: every card in the cube + oracle text supports every role + audit ≥ WARN + Phase 5C all-PASS + Phase 6b HARD gates pass.
 
 ### Re-evaluation Path
 
