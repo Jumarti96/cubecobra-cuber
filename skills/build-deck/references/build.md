@@ -57,6 +57,8 @@ Read `dossier.mana_infrastructure` before choosing the mana base — `enters_tap
 
 > "14 blue pips, 8 black pips (64% / 36%). Targeting 11 blue sources and 6 black sources out of 17 total lands."
 
+**Land-property census — required only when a locked-pipeline core card's function scales with a property of lands you control** (a land-type word — Island, Swamp…; "basic land"; snow; your land count / Domain). For each such property, enumerate from `type_line` which pool lands have it: a land has a type iff its type line says so — `Land — Island Mountain` IS an Island; "basic" is a supertype, not a land type. Record the census in `land_math` as `{"<property>": [<qualifying pool lands>]}` and allocate that property's sources from the qualifying set first. Excluding or capping a census member is a decision with a stated mechanism cost (e.g. its enters-tapped cost against this deck's thesis turn). No qualifying core card → no census.
+
 **5. FILL.** For every card: quote `oracle_text` from the working pool cache before including it; verify against `card_pool_rules`; build a running restrictions checklist.
 
 Read `taxonomic_profile.resource_exchange` alongside the oracle text — it is the card's resource ledger (`Mana:`/`Cards:`/`Board:`/`Life:` labels; empty = neutral). When the key is absent (cube tagged before the pillar existed), derive the same labels from oracle text for the cards you evaluate. Two obligations follow:
