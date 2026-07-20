@@ -1,6 +1,6 @@
 # build-deck reference — Phases 5–6b: build mechanics
 
-Read at the start of Phase 5; covers the lightweight sweep, the seven-step build procedure, the pre-flight checks, and the Phase 6b structural-gate invocation. Mechanics only — the IRON RULE, the Counts Principle, and the gate semantics are in SKILL.md.
+Read at the start of Phase 5; covers the lightweight sweep, the Step-0 sketch-and-select gate, the seven-step build procedure, the pre-flight checks, and the Phase 6b structural-gate invocation. Mechanics only — the IRON RULE, the Counts Principle, and the gate semantics are in SKILL.md.
 
 The build works from the whole filtered pool (the working pool cache), bounded by `core_colors`, `splash_colors`, and the named `splash_candidates`. There is no separate legal/index split — the grill bundle ships the full `working_pool`, and the sideboard and absence audit see the rest of the cube through it.
 
@@ -27,9 +27,19 @@ Record a short sweep before committing the list. It is **not** a total-coverage 
 
 Write it to `_workspace/<run-token>/sweep.json` (kept in the workspace; it is not a saved deck file).
 
-## Phase 5B — the seven build steps
+## Phase 5B — the build steps (Step 0, then the seven)
 
-**1. CLASSIFY.** Choose one macro-archetype that fits the pipeline: Tempo / Combo / Aggro / Midrange / Control. State the classification and the projected average MV.
+**Step 0 — SKETCH → JUDGE → LOCK (every build, before you classify).** Do not pick a shape and build from it. Sketch a few shapes, have an independent judge pick one, then build from the winner. This runs on **every** build — when a pipeline supports only one shape the sketches converge and the judge simply confirms the commitment; there is no "clean pipeline" skip. (Rationale: a single builder committing greedily both varies wildly run-to-run and develops blind spots — it silently never considers a whole viable shape.)
+
+*0a. Sketch 2–3 skeletons (paper, not builds).* Each sketch is `{macro_archetype, slot_table (% + count per the table below), land_pip_implication (one line), keystone_package, rationale (one line tied to the locked thesis)}`. The **keystone_package** is the payoff cluster + the 3–5 load-bearing cards that define THAT shape's plan — not the full deck — drawn from the Phase 5A `include_candidates` sweep, each with its assigned role and its `oracle_text` quoted from the working pool cache (IRON RULE; the judge verifies role-fit from it and gets no pool). Make the sketches **as distinct as the pipeline genuinely supports** — where it plausibly reads as more than one macro-archetype, span those archetypes; **do not fabricate divergence** (if only one shape is real, sketch it and say so). Every sketch is a different **shape of the *locked* pipeline** — it must serve the locked thesis's `kill_mechanism` and stay within the pipeline's clusters. A sketch that reaches into a different plan the pool merely also supports (another payoff or cluster) is a *different pipeline*, not a shape — that is fabricated divergence. Present them in **neutral order, with no favorite signaled** — you are producing options for the judge, not defending a pick.
+
+*0b. Dispatch the shape judge (independent subagent; the SKILL.md Phase Protocol markers apply — announce it, verify BEGIN/END before use).* Its input bundle is EXACTLY: the 2–3 sketches (shape + keystone names/roles + those keystones' oracle text), the locked pipeline `thesis` (`kill_mechanism`, `goldfish_turn`, `default_role`), the Phase 1 intent + power level, the slot band table below + format / deck size N (+ commander identity if any), and `core_colors` / `splash_colors`. Give it **no working pool, no dossier, and no signal of which sketch you prefer** — finding a better card in the pool is Phase 9's job; this judge only chooses among the shapes you sketched. State its contract as a recipe:
+- *Rubric:* pick the sketch whose shape + keystone package best delivers the thesis kill mechanism by the goldfish turn, consistent with `default_role` and the intent, with each keystone's oracle text actually supporting its assigned role. A slot deviation from the bands is acceptable **only** with a thesis-grounded reason. Do **not** rank by "fewest deviations" — the most convincing plan wins even if it deviates more.
+- *Output (fixed shape):* a ranked pick with one line of grounds per sketch; `weak_keystones` (any keystone whose oracle text does not support its assigned role); `false_choice` (an informational note if the sketches are not materially distinct). One whole sketch wins — the judge never blends sketches and never names a pool card.
+
+*0c. Lock the winner.* Adopt the judge's picked sketch as the skeleton; steps 1–4 below now **record and refine** it rather than choose a shape fresh. Two obligations flow into FILL (step 5): resolve every `weak_keystones` entry, and **harvest** the rejected sketches. Record the whole selection as `build_output.skeleton_selection` (step 7).
+
+**1. CLASSIFY — lock the selected skeleton's classification.** State the macro-archetype of the judge's picked sketch and the projected average MV. This records the locked choice; it is not a fresh pick.
 
 **2. ALLOCATE SLOTS — proportional to N.** State every slot as a percentage AND an absolute count `round(N × proportion)`, each with a one-sentence rationale tied to THIS pipeline. Land % is of deck_size N; nonland proportions are % of nonland cards.
 
@@ -65,12 +75,14 @@ Read `taxonomic_profile.resource_exchange` alongside the oracle text — it is t
 - Every mainboard card tagged `Cards: Extra-Cost` or `Board: Sacrifice-Cost` must have its cost **fed**, stated as a count per the Counts Principle: how many cards in this list can pay that cost when it matters?
 - Every `Mana: Ongoing-Cost` card gets one line in the mana reasoning stating how this deck keeps paying it.
 
+**Harvest the rejected sketches (from Step 0).** The losing sketches' keystones are FILL candidates for the locked shape — a card another frame surfaced does not die just because its shape lost. Review each and include any that fit the locked slot allocation **role-for-role**; do NOT add a new role or widen a slot to fit one (that re-blends the modes the judge rejected). Record what you pull in as `skeleton_selection.harvested_from_rejected`. Also resolve every `weak_keystones` entry the judge flagged: replace the card or justify it with thesis grounds here — never carry an unresolved one to Phase 9.
+
 **6. COUNT-DEPENDENT VERDICTS (the Counts Principle).** For every inclusion or rejection whose value turns on how many other cards qualify (cost reducers, tribal/type-matters payoffs, storm/spell-count triggers, graveyard counts, devotion, threshold, metalcraft, delirium, domain, affinity), state the count as a numerator/denominator against **this deck's list** — not an adjective. Compute it against the mainboard you actually built; if you later swap a card and a denominator moves, recount.
 
 > "Helm of Awakening discounts every nonland card with a generic component: 18 of the 24 nonland cards qualify. INCLUDE."
 
 **7. Record your derivation** as `build_output` (this feeds the grill bundle and Phase 10):
-`macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `thesis_turn` and `default_role` (copied from the locked pipeline's thesis), `slot_allocation`, `land_math`, `pip_math`, `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `restrictions_checklist`. Phase 6b appends `structural_checks`, `structural_responses`, `coverage`, and `failure_modes`.
+`macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `thesis_turn` and `default_role` (copied from the locked pipeline's thesis), `slot_allocation`, `land_math`, `pip_math`, `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `restrictions_checklist`, and `skeleton_selection` (Step 0's record: `{chosen, rejected_sketches: [{archetype, slot_table, keystones, why_rejected}], judge_grounds, weak_keystones, false_choice_note, harvested_from_rejected: [{card, from_archetype, role}]}`). Phase 6b appends `structural_checks`, `structural_responses`, `coverage`, and `failure_modes`.
 
 ## Phase 5C — the pre-flight checks (deterministic)
 

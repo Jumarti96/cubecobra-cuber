@@ -39,7 +39,7 @@ This binds every card whose value is a function of how many others qualify: cost
 
 No banner, no phase. The banner is written the moment the phase begins — not retroactively, not batched with the next one. A phase whose banner never appeared is a phase that was skipped.
 
-**Subagent protocol (the Phase 9 agents):**
+**Subagent protocol (the Phase 5B shape judge and the Phase 9 agents):**
 
 1. When dispatching, announce it: `⏳ Dispatching Proposer + Challenger`.
 2. Every dispatch prompt mandates that the agent's report **open** with `=== <ROLE> REPORT — BEGIN ===` and **close** with `=== <ROLE> REPORT — END ===`.
@@ -208,7 +208,9 @@ The considered-but-excluded entries become the `### CARDS CONSIDERED BUT EXCLUDE
 
 Build from the INCLUDE candidates. For each card, its oracle text (from the working pool cache) must support the role you assign; if it does not, the card does not go in.
 
-Follow the seven numbered steps in `references/build.md`: **1 CLASSIFY → 2 ALLOCATE SLOTS → 3 LAND COUNT → 4 MANA SOURCES → 5 FILL → 6 COUNT-DEPENDENT VERDICTS → 7 record `build_output`**.
+**Before you classify, run Step 0 — sketch → judge → lock (every build):** sketch 2–3 materially-distinct skeletons, dispatch an independent, pool-blind **shape judge** (subagent protocol above) to pick one, lock it, and carry its `weak_keystones` and rejected-sketch **harvest** into FILL. Breaks a greedy single-commit that varies run-to-run and blind-spots viable shapes. Mechanics in `references/build.md`.
+
+Then follow the numbered steps in `references/build.md`: **0 SKETCH→JUDGE→LOCK → 1 CLASSIFY (lock the selected) → 2 ALLOCATE SLOTS → 3 LAND COUNT → 4 MANA SOURCES → 5 FILL (+ harvest) → 6 COUNT-DEPENDENT VERDICTS → 7 record `build_output`**.
 
 ### Phase 5C — Pre-flight Validation (deterministic)
 
@@ -274,7 +276,7 @@ The bundle contains:
 - `audit`: the mana audit result object from Phase 6
 - `card_pool_rules`: the confirmed pool rules object from Phase 0
 - `restrictions_checklist`: the compliance checklist from Phase 5
-- `build_output`: your recorded derivation — `macro_archetype`, `deck_identity`, `thesis_turn`, `default_role`, `slot_allocation`, `land_math`, `pip_math`, `coverage`, `failure_modes`, `structural_checks`, `structural_responses`. This lets the grill audit the **derivation**, not just the list.
+- `build_output`: your recorded derivation — `macro_archetype`, `deck_identity`, `thesis_turn`, `default_role`, `slot_allocation`, `skeleton_selection` (the Step-0 sketch → judge → lock record), `land_math`, `pip_math`, `coverage`, `failure_modes`, `structural_checks`, `structural_responses`. This lets the grill audit the **derivation**, not just the list.
 - `validation_report`: the Phase 5C check results (all PASS by the time you get here)
 - `working_pool`: the full working pool array from the cache — the grill's evidence base and what its absence audit scans
 - `dossier`: the cube dossier (for the threat-profile sideboard and interaction checks)
