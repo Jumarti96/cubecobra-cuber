@@ -194,7 +194,7 @@ Skip for 40-card and 60-card formats. Follow the procedure in `references/discov
 
 ## Phase 5: Deck Build
 
-You build the deck. **Read `references/build.md` now.** It holds the seven-step build procedure, the slot-allocation table, the land-count modifiers, the pip-source math, the lightweight sweep shape, and the Phase 6b invocation.
+You build the deck. **Read `references/build.md` now.** It holds the seven-step build procedure, the slot-allocation table, the land-count model (formula + hypergeometric refinement, computed by `deck_audit.land_target` — never a percentage read off a table), the pip-source math, the lightweight sweep shape, and the Phase 6b invocation.
 
 ### Phase 5A — Lightweight Sweep
 
@@ -222,11 +222,13 @@ Write `_workspace/<run-token>/_tmp_validate_build.py` and run the light checks i
 
 Convert the mainboard into card dicts (join `name` against the working pool cache).
 
-Run `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)`.
+Run `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors, macro_archetype=macro_archetype)`.
 Display the report using `deck_audit.format_audit_report(audit)`.
 
+Pass `macro_archetype` — it selects the land-target archetype delta and opening-hand window. Omitting it silently audits every deck as midrange.
+
 **If audit result is FAIL:**
-- Adjust land count toward the recommended target
+- Adjust land count toward the recommended target. The audit and Phase 5B step 3 call the *same* `land_target` function, so a land-count FAIL means the list drifted from the target you built to — usually because the actual avg MV moved during FILL. Fix the count, not the recommendation; `audit["land_target_trace"]` shows the derivation.
 - Re-balance producing lands if a color gap > 15pp exists
 - Replace non-producing utility lands with on-color duals from the pool
 - Re-run the audit after adjustments; log all swaps made

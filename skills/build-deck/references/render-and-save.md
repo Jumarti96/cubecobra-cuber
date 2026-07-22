@@ -124,7 +124,8 @@ JSON rules:
 - `cube_slug`: the slug from `meta.json` (`slug` field)
 - `built_at`: ISO 8601 UTC, second precision, Z suffix — `"2026-05-20T14:30:00Z"`
 - Card `board` values: `"mainboard"` / `"sideboard"` (full words, never `"main"` or `"side"`)
-- `mana_audit` must include: `land_count`, `recommended_land_count`, `land_count_status`, `ramp_count`, `avg_cmc`, `pip_demand`, `land_color_production`, `color_balance_status`, `color_balance_per_color`, `overall_status`
+- `mana_audit` must include: `land_count`, `recommended_land_count`, `land_count_status`, `ramp_count`, `cantrip_count`, `accel_count`, `land_target_trace`, `avg_cmc`, `pip_demand`, `land_color_production`, `color_balance_status`, `color_balance_per_color`, `overall_status`
+  (`land_target_trace` is the land-count derivation; it is `null` for commander formats, which use the Burgess/Karsten target instead)
 
 Use the Write tool (apostrophes in card names break shell quoting).
 
