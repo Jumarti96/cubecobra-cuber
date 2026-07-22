@@ -61,7 +61,7 @@ Write it to `_workspace/<run-token>/sweep.json` (kept in the workspace; it is no
 
 | Slot                  | Tempo   | Combo   | Aggro   | Midrange       | Control |
 |-----------------------|---------|---------|---------|----------------|---------|
-| Lands                 | 30–34%  | 30–36%  | 30–35%  | 38–42%         | 42–47%  |
+| Lands                 | derived — step 3 | derived — step 3 | derived — step 3 | derived — step 3 | derived — step 3 |
 | Interaction           | 25–35%  | 10–20%  | 10–15%  | 20–30%         | 35–45%  |
 | Threats/Payoffs       | 10–18%  | 5–15%   | 45–55%  | 30–40%         | 5–10%   |
 | Engine & Infra.       | 20–30%  | 40–50%  | 0–10%   | 0% (absorbed)  | 10–20%  |
@@ -70,14 +70,56 @@ Write it to `_workspace/<run-token>/sweep.json` (kept in the workspace; it is no
 
 The ranges are guidance; the rationale must justify any deviation.
 
-**3. LAND COUNT.** State the baseline, then every modifier explicitly, even when zero:
-- **Cantrips:** −1 land per 3 one-mana filtering/draw spells
-- **Mana dorks/rocks:** −0.5 land per 2 cheap non-land mana sources (MV ≤ 2)
-- **MDFCs with a land back:** −0.5 if spell side is situational; −0.3 if spell side is a primary engine piece
+**3. LAND COUNT — call `deck_audit.land_target`; do not derive a count by hand.**
 
-> "Baseline: 16 (40% of N=40). Modifiers: −1 cantrip, −0 infra, −0 MDFC. Final: 15 lands."
+The land count is a computed value, not a percentage read off a table:
 
-Read `dossier.mana_infrastructure` before choosing the mana base — `enters_tapped`, `conditionally_tapped` and `self_bounce` are flags the audit cannot see. A self-bouncing land swaps a land rather than adding one.
+```
+base(N) = the land count maximizing P(2–4 lands in an opening hand of 7)   → 17 at N=40, 25 at N=60
+target  = base(N) + [ 2·(avg MV − 2.5) − 0.25·(cantrips + ramp) + archetype delta ] · (N/60)
+```
+
+The opening hand is a fixed 7 cards at every deck size, so the land *fraction* that produces a
+good opener is not scale-invariant and a percentage carried over from 60-card constructed is
+wrong at 40 cards. Solving the opening hand per deck size is what makes the base correct; the
+curve, acceleration and archetype terms then shape the count around it.
+
+Write a temp script in the run dir and print the returned dict:
+
+```python
+from cuber import deck_audit
+trace = deck_audit.land_target(
+    deck_size,            # N (excluding the commander)
+    projected_avg_mv,     # avg MV of NONLAND cards, from step 1
+    accel,                # cantrips + ramp, counted ONCE each — deck_audit.accel_count(non_lands)
+    macro_archetype,      # the family fixed in Step 0
+)
+print(trace)
+```
+
+Record the returned dict **verbatim** as `land_math.target`. Its `recommended_land_count` is the
+count you build to. Do not recompute, round, or adjust any of its numbers by hand — the same
+function is what Phase 6 audits against, so a hand-derived count creates a disagreement the audit
+will flag.
+
+Two fields need reading, not just recording:
+- `clamped: true` means the target ran outside the sane land-fraction band and the guardrail bit.
+  That is a signal your projected avg MV is extreme for this deck size — re-check it before
+  accepting the number rather than treating the clamped value as the answer.
+- `adjustment` is how far the deck's curve, acceleration and seat moved it off `base_lands`. A
+  deviation from `recommended_land_count` needs a thesis-grounded reason stated in
+  `land_math.deviation`, and should stay within 1 of it.
+
+**Composition, not count.** Read `dossier.mana_infrastructure` before choosing *which* lands fill
+the slots — `enters_tapped`, `conditionally_tapped` and `self_bounce` are flags the audit cannot
+see. These change composition, never the count: a self-bouncing land swaps a land rather than
+adding one, and an MDFC with a land back fills a land slot. Note these in
+`land_math.composition_notes`.
+
+**Re-derive after FILL.** This step runs on the *projected* avg MV. After step 5, recompute avg MV
+from the actual mainboard and call `land_target` again. If the recommendation moved by more than
+1, adopt the new count and adjust the list — the same recount-on-a-moved-denominator discipline as
+the Counts Principle. Record both calls in `land_math`.
 
 **4. MANA SOURCES.** Count colored pips across core-color cards only. Compute each core color's pip share. Distribute producing lands proportionally. If `splash_colors` is non-empty, allocate 2–3 dedicated sources per splash color out of the remaining land slots; splash pips are excluded from the proportional math. State the pip counts and the derived split:
 

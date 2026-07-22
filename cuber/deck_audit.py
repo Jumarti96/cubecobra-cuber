@@ -104,20 +104,173 @@ def karsten_adjustment(ramp_count: int, deck_size: int) -> int:
     return round(max(36, 42 - math.floor(ramp_count / 2.5)) * deck_size / 100)
 
 
-def constructed_land_target(ramp_count: int, avg_cmc: float, deck_size: int) -> int:
-    """Baseline 24 for 60-card constructed, scaled; adjusted for ramp and curve.
+# ── Land-count model: hypergeometric base + curve/accel adjustment ───────────
+#
+#   base(N) = argmax_L  P(2 <= lands <= 4 in an opening hand of 7)
+#   target  = base(N) + [ 2*(avg_mv - 2.5) - 0.25*accel + delta ] * (N / 60)
+#
+# The old model was `round(24 * deck_size / 60)` — 60-card constructed proportions
+# scaled linearly. That is wrong across deck sizes: the opening hand is a fixed 7
+# cards regardless of deck size, so the land *fraction* producing a good opener is
+# not scale-invariant. Solving the opening-hand problem per deck size gives 17/40
+# (42.5%) but 25/60 (41.7%) — neither is the 40% the old baseline assumed.
+#
+# Two things are load-bearing about this shape:
+#
+# 1. The BASE carries the deck-size effect and has no free parameters. An earlier
+#    draft made the curve term absolute (`N/3 + 2*avg_mv`), but an absolute card
+#    count contributes the same ~5.6 lands to a 40-card and a 60-card deck, which
+#    is a far bigger share of the smaller one. Everything that is not the base is
+#    therefore scaled by N/60.
+#
+# 2. Archetype lives ONLY in the delta, never in the base window. Using a narrower
+#    (2,3) window for fast decks AND subtracting for their low curve double-counts
+#    the same fact — aggro is fast *because* it is low-curve — and produced 12-14
+#    land recommendations for 40-card aggro.
 
-    Clamp: [14, 18] for 40-card, [20, 27] for 60-card.
+# The opening-hand land window the base solves for. 2 lands is the floor for a
+# keepable hand; past 4 the extra land is a blank.
+BASE_WINDOW = (2, 4)
+
+# Applied to the scaled adjustment. Captures what avg MV does NOT already say:
+# control must hit every land drop and converts excess mana into cards; aggro and
+# combo stop needing lands once they reach their operating count. Do not re-encode
+# deck speed here — the avg-MV term already carries it.
+ARCHETYPE_LAND_DELTA = {
+    "aggro": -1.5,
+    "tempo": -1.0,
+    "combo": -1.0,
+    "midrange": 0.0,
+    "control": 1.0,
+}
+
+# The curve the base implicitly assumes; the adjustment reads avg MV as a deviation
+# from this, so a deck on this exact curve gets no curve adjustment at all.
+REFERENCE_AVG_MV = 2.5
+
+DEFAULT_ARCHETYPE = "midrange"
+
+# Guardrail only, for extreme inputs (a deck whose projected curve is far outside
+# anything playable). The clamp is FLAGGED in the trace rather than applied
+# silently, because a clamped result means an input needs re-checking.
+LAND_FRACTION_CLAMP = (0.33, 0.475)
+
+# One-mana card-flow effects. Compared as whole tags, case-insensitively — see the
+# RAMP_TAGS comment above for why a substring test is a silent-zero bug.
+CANTRIP_TAGS = frozenset({
+    "card draw",
+    "card selection",
+    "looting",
+})
+
+
+def hypergeom_window(
+    deck_size: int, lands: int, lo: int, hi: int, draws: int = 7
+) -> float:
+    """P(lo <= lands drawn <= hi) in an opening hand of `draws` cards."""
+    if deck_size <= 0 or draws > deck_size:
+        return 0.0
+    total = math.comb(deck_size, draws)
+    hits = 0
+    for k in range(max(lo, 0), min(hi, draws, lands) + 1):
+        if draws - k > deck_size - lands:
+            continue
+        hits += math.comb(lands, k) * math.comb(deck_size - lands, draws - k)
+    return hits / total
+
+
+def is_cantrip_card(card: Dict[str, Any]) -> bool:
+    """True if the card is a one-mana nonland that replaces or filters itself."""
+    if "land" in (card.get("type_line") or "").lower():
+        return False
+    if float(card.get("cmc") or 0) > 1:
+        return False
+    return any((t or "").strip().lower() in CANTRIP_TAGS for t in (card.get("tags") or []))
+
+
+def accel_count(non_lands: List[Dict[str, Any]]) -> int:
+    """Count cards that accelerate or smooth mana — the `A` term in the formula.
+
+    A union, not a sum: a card that is both a cantrip and ramp counts once.
     """
-    baseline = round(24 * deck_size / 60)
-    adjusted = baseline - math.floor(ramp_count / 3)
-    if avg_cmc <= 2.0:
-        adjusted -= 1
-    elif avg_cmc >= 4.0:
-        adjusted += 1
-    if deck_size <= 40:
-        return max(14, min(18, adjusted))
-    return max(20, min(27, adjusted))
+    return sum(1 for c in non_lands if is_ramp_card(c) or is_cantrip_card(c))
+
+
+def hypergeometric_base(deck_size: int, window: Optional[tuple] = None) -> int:
+    """Land count maximizing P(lands in the opening 7 falls inside `window`).
+
+    This is the deck-size-aware anchor and has no free parameters: it is solved per
+    deck size rather than scaled from a 60-card percentage. Ties go to the lower
+    count. Gives 17 for N=40 (42.5%) and 25 for N=60 (41.7%).
+    """
+    lo, hi = window or BASE_WINDOW
+    return max(
+        range(deck_size + 1),
+        key=lambda n: (hypergeom_window(deck_size, n, lo, hi), -n),
+    )
+
+
+def land_adjustment(
+    deck_size: int, avg_mv: float, accel: int, archetype: str
+) -> float:
+    """Curve + acceleration + archetype shift, scaled to deck size.
+
+    Scaled by N/60 because these are all *proportional* effects: a curve one point
+    above reference should move a 40-card deck by two thirds of what it moves a
+    60-card deck, not by the same absolute number of cards.
+    """
+    raw = (
+        2 * (avg_mv - REFERENCE_AVG_MV)
+        - 0.25 * accel
+        + ARCHETYPE_LAND_DELTA[archetype]
+    )
+    return raw * (deck_size / 60)
+
+
+def land_target(
+    deck_size: int,
+    avg_mv: float,
+    accel: int,
+    macro_archetype: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Recommended land count, with the full derivation trace.
+
+    The returned dict IS the record the deck builder stores as `land_math.target`;
+    nothing downstream should re-derive or hand-copy these numbers.
+    """
+    archetype = (macro_archetype or "").strip().lower()
+    if archetype not in ARCHETYPE_LAND_DELTA:
+        archetype = DEFAULT_ARCHETYPE
+
+    base = hypergeometric_base(deck_size)
+    adjustment = land_adjustment(deck_size, avg_mv, accel, archetype)
+    raw_target = base + adjustment
+
+    lo_bound = math.ceil(LAND_FRACTION_CLAMP[0] * deck_size)
+    hi_bound = math.floor(LAND_FRACTION_CLAMP[1] * deck_size)
+    # Half-UP, not Python's round(): banker's rounding sends both 23.5 and 24.5 to
+    # 24, so a deck with a strictly lower target could tie one with a higher target
+    # and the model stopped being monotonic in the adjustment.
+    rounded = math.floor(raw_target + 0.5)
+    recommended = max(lo_bound, min(hi_bound, rounded))
+
+    return {
+        "base_lands": base,
+        "base_window": BASE_WINDOW,
+        "base_p_window": round(hypergeom_window(deck_size, base, *BASE_WINDOW), 4),
+        "archetype": archetype,
+        "delta": ARCHETYPE_LAND_DELTA[archetype],
+        "avg_mv": avg_mv,
+        "reference_avg_mv": REFERENCE_AVG_MV,
+        "accel": accel,
+        "adjustment": round(adjustment, 3),
+        "raw_target": round(raw_target, 3),
+        "clamped": recommended != rounded,
+        "recommended_land_count": recommended,
+        "p_window_at_recommended": round(
+            hypergeom_window(deck_size, recommended, *BASE_WINDOW), 4
+        ),
+    }
 
 
 def color_balance(
@@ -210,23 +363,31 @@ def mana_audit(
     commander_cards: Optional[List[Dict[str, Any]]] = None,
     core_colors: Optional[List[str]] = None,
     splash_colors: Optional[List[str]] = None,
+    macro_archetype: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run full mana audit and return structured result dict.
 
     format: one of "40-card", "60-card", "commander-60", "commander-100"
     core_colors: primary deck colors (subset of all card color identities)
     splash_colors: off-color splash colors (≤ 3 cards each)
+    macro_archetype: drives the land-target archetype delta and opening-hand
+        window (constructed formats only); unknown/None falls back to midrange.
     """
     lands = [c for c in deck_cards if "land" in (c.get("type_line") or "").lower()]
     non_lands = [c for c in deck_cards if "land" not in (c.get("type_line") or "").lower()]
     ramp = [c for c in non_lands if is_ramp_card(c)]
+    cantrips = [c for c in non_lands if is_cantrip_card(c)]
+    accel = accel_count(non_lands)
     deck_size = len(deck_cards)
     land_count = len(lands)
 
     cmc_vals = [float(c.get("cmc") or 0) for c in non_lands]
     avg_cmc = round(sum(cmc_vals) / len(cmc_vals), 2) if cmc_vals else 0.0
 
+    land_target_trace = None
     if format in ("commander-60", "commander-100"):
+        # Commander keeps the Burgess + Karsten average: the new formula is not
+        # calibrated for singleton 100-card decks or commander tax.
         cmd = commander_cards[0] if commander_cards else {}
         color_count = len(set(cmd.get("color_identity") or ["W", "B"]))
         commander_cmc = float(cmd.get("cmc") or 4)
@@ -234,7 +395,8 @@ def mana_audit(
         rec_karsten = karsten_adjustment(len(ramp), deck_size)
         recommended_land_count = round((rec_burgess + rec_karsten) / 2)
     else:
-        recommended_land_count = constructed_land_target(len(ramp), avg_cmc, deck_size)
+        land_target_trace = land_target(deck_size, avg_cmc, accel, macro_archetype)
+        recommended_land_count = land_target_trace["recommended_land_count"]
 
     land_diff = abs(land_count - recommended_land_count)
     if land_diff <= 1:
@@ -283,6 +445,9 @@ def mana_audit(
         "recommended_land_count": recommended_land_count,
         "land_count_status": land_count_status,
         "ramp_count": len(ramp),
+        "cantrip_count": len(cantrips),
+        "accel_count": accel,
+        "land_target_trace": land_target_trace,
         "avg_cmc": avg_cmc,
         "pip_demand": core_pips,
         "land_color_production": all_land_prod,
@@ -301,7 +466,26 @@ def format_audit_report(audit: Dict[str, Any]) -> str:
         f"── Mana Audit: {audit['overall_status']} {'─' * 40}",
         f"Land Count:  {audit['land_count']} / {audit['recommended_land_count']} recommended  "
         f"[{audit['land_count_status']}]",
-        f"Avg CMC:     {audit['avg_cmc']}   Ramp cards: {audit['ramp_count']}",
+        f"Avg CMC:     {audit['avg_cmc']}   Ramp cards: {audit['ramp_count']}"
+        f"   Cantrips: {audit.get('cantrip_count', 0)}",
+    ]
+
+    trace = audit.get("land_target_trace")
+    if trace:
+        lo, hi = trace["base_window"]
+        lines.append(
+            f"  Derivation: base {trace['base_lands']}"
+            f" (argmax P({lo}-{hi} in 7) = {trace['base_p_window']:.3f})"
+            f"  {trace['adjustment']:+.2f} adj"
+            f" [MV {trace['avg_mv']} vs {trace['reference_avg_mv']},"
+            f" {trace['accel']} accel, {trace['archetype']} {trace['delta']:+.1f},"
+            f" scaled N/60]"
+            f"  ->  {trace['recommended_land_count']} lands"
+            f"  (P({lo}-{hi} in 7) = {trace['p_window_at_recommended']:.3f})"
+            + ("  [CLAMPED]" if trace["clamped"] else "")
+        )
+
+    lines += [
         "",
         f"Color Balance (core):  [{audit['color_balance_status']}]",
     ]
