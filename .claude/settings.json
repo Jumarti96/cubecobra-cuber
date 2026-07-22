@@ -18,11 +18,11 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash|PowerShell",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'PY=$(command -v python3 || command -v python); exec \"$PY\" \"$CLAUDE_PROJECT_DIR/scripts/gate_export.py\"'",
+            "command": "sh -c 'S=\"$CLAUDE_PROJECT_DIR/agent_env/gate_export.py\"; [ -f \"$S\" ] || exit 0; PY=$(command -v python3 || command -v python) || exit 0; exec \"$PY\" \"$S\"'",
             "statusMessage": "Checking build-deck export gate..."
           }
         ]

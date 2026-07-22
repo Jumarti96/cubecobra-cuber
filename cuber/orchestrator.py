@@ -77,8 +77,19 @@ PHASE_LABELS = {
     PHASE_EXPORT: "Export",
 }
 
-#: Phases that MUST be carried out by independent dispatched subagents.
-SUBAGENT_PHASES = frozenset({PHASE_SKETCH_JUDGE, PHASE_GRILL})
+#: Phases that MUST be carried out by independent agents.
+#:
+#: "Independent" is a property, not a mechanism: two agents that did not see
+#: each other's output. HOW you achieve that is environment-specific — a Claude
+#: Code subagent, a separate CLI process, a direct API call — so the schema
+#: demands the property and records the mechanism in `dispatch_method` rather
+#: than requiring any one harness's feature.
+INDEPENDENT_PHASES = frozenset({PHASE_SKETCH_JUDGE, PHASE_GRILL})
+SUBAGENT_PHASES = INDEPENDENT_PHASES          # legacy alias
+
+#: Recognised values for a result's `dispatch_method` (informational, not gated).
+DISPATCH_METHODS = ("claude-subagent", "separate-process", "separate-session",
+                    "api-call", "unspecified")
 
 #: Role keywords that must each be present among a subagent phase's results.
 #: Matched as substrings so "sketcher-lens-2" satisfies "sketch".
@@ -87,9 +98,31 @@ REQUIRED_ROLES: Dict[str, Tuple[str, ...]] = {
     PHASE_GRILL: ("proposer", "challenger"),
 }
 
-MIN_SUBAGENTS = 2
+MIN_AGENTS = 2
+MIN_SUBAGENTS = MIN_AGENTS                    # legacy alias
 MIN_REPORT_CHARS = 200
-VALID_MODES = ("inline", "subagent")
+
+#: Canonical modes. "subagent" is accepted on input and normalised to
+#: "independent" so pre-existing artifacts and docs keep working.
+VALID_MODES = ("inline", "independent")
+MODE_ALIASES = {"subagent": "independent"}
+
+#: Canonical results key; the old Claude-flavoured name is still read.
+RESULTS_KEY = "agent_results"
+LEGACY_RESULTS_KEY = "subagent_results"
+
+
+def normalise_mode(mode):
+    return MODE_ALIASES.get(mode, mode)
+
+
+def results_of(data: dict):
+    """Read the results list, tolerating the legacy key."""
+    if isinstance(data.get(RESULTS_KEY), list):
+        return data[RESULTS_KEY]
+    if isinstance(data.get(LEGACY_RESULTS_KEY), list):
+        return data[LEGACY_RESULTS_KEY]
+    return None
 
 STATUS_COMPLETE = "complete"
 STATUS_FAILED = "failed"
@@ -159,10 +192,10 @@ def current_run_id(root=None) -> Optional[str]:
 
 # ── validation ────────────────────────────────────────────────────────────────
 
-def _validate_subagent_results(phase: str, results: Sequence[dict]) -> None:
-    if len(results) < MIN_SUBAGENTS:
+def _validate_agent_results(phase: str, results: Sequence[dict]) -> None:
+    if len(results) < MIN_AGENTS:
         raise GateError(
-            f"{phase}: requires at least {MIN_SUBAGENTS} dispatched subagent results, "
+            f"{phase}: requires at least {MIN_AGENTS} independent agent results, "
             f"got {len(results)}. A phase that mandates independent agents cannot be "
             f"satisfied by one agent or by an inline check."
         )
@@ -219,27 +252,28 @@ def validate_artifact(data, phase: str) -> None:
         if not data.get(field):
             raise GateError(f"{phase}: artifact missing required field {field!r}")
 
-    mode = data.get("mode")
+    mode = normalise_mode(data.get("mode"))
     if mode not in VALID_MODES:
         raise GateError(f"{phase}: mode must be one of {VALID_MODES}, got {mode!r}")
 
-    results = data.get("subagent_results")
-    if not isinstance(results, list):
-        raise GateError(f"{phase}: subagent_results must be a list")
+    results = results_of(data)
+    if results is None:
+        raise GateError(f"{phase}: {RESULTS_KEY} must be a list")
 
-    if phase in SUBAGENT_PHASES:
-        if mode != "subagent":
+    if phase in INDEPENDENT_PHASES:
+        if mode != "independent":
             raise GateError(
-                f"{phase}: mode must be 'subagent' (got {mode!r}). This phase requires "
-                f"independent dispatched agents; running it inline does not satisfy it."
+                f"{phase}: mode must be 'independent' (got {mode!r}). This phase "
+                f"requires two agents that did not see each other's output; running "
+                f"it inline does not satisfy it."
             )
-        _validate_subagent_results(phase, results)
+        _validate_agent_results(phase, results)
 
 
 # ── recording ─────────────────────────────────────────────────────────────────
 
 def record_phase(root, run_id: str, phase: str, mode: str,
-                 payload=None, subagent_results=None,
+                 payload=None, agent_results=None, subagent_results=None,
                  started_at: str = None, ended_at: str = None,
                  retry: bool = False) -> Path:
     """Validate and write a passing artifact. Raises before writing on any fault."""
@@ -265,8 +299,8 @@ def record_phase(root, run_id: str, phase: str, mode: str,
         "run_id": run_id,
         "started_at": started_at or now,
         "ended_at": ended_at or now,
-        "mode": mode,
-        "subagent_results": list(subagent_results or []),
+        "mode": normalise_mode(mode),
+        RESULTS_KEY: list(agent_results or subagent_results or []),
         "payload": payload if payload is not None else {},
         "recorded_at": now,
     }
@@ -340,6 +374,63 @@ def assert_export_allowed(root, run_id: str) -> None:
         if phase == PHASE_EXPORT:
             break
         assert_phase_complete(root, run_id, phase)
+
+
+#: The four files a build-deck run produces. Nothing else may be written.
+DECK_FILES = ("deck.json", "deck.tsv", "deck.mwDeck", "analysis.md")
+
+
+def export_deck(root, run_id: str, manifest: dict, deck_root=None) -> List[Path]:
+    """Gate-checked deck write. **The only sanctioned way to save a deck.**
+
+    This is what makes the gate portable. A PreToolUse hook can intercept a
+    stray write, but hooks are a Claude Code feature; making the orchestrator
+    the sole writer means there is no unguarded path to intercept in the first
+    place — the check runs in the same function as the write, in any
+    environment, under any CLI.
+
+    ``manifest`` is ``{cube_id, deck_name, files: {<name>: <content>}}`` where
+    content is a string, or an object for ``deck.json``.
+    """
+    assert_export_allowed(root, run_id)        # raises before anything is written
+
+    cube_id = str(manifest.get("cube_id", "")).strip()
+    deck_name = str(manifest.get("deck_name", "")).strip()
+    if not cube_id or not deck_name:
+        raise GateError("manifest needs a non-empty cube_id and deck_name")
+
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise GateError("manifest.files must be a non-empty object")
+
+    unknown = [n for n in files if n not in DECK_FILES]
+    if unknown:
+        raise GateError(
+            f"manifest.files contains non-deck file(s): {', '.join(unknown)}. "
+            f"The exporter writes only {', '.join(DECK_FILES)}."
+        )
+
+    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in deck_name.lower())
+    out_dir = Path(deck_root if deck_root is not None else Path(root or default_root())) \
+        / "cubes" / cube_id / "decks" / slug
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    for name in DECK_FILES:
+        if name not in files:
+            continue
+        content = files[name]
+        if not isinstance(content, str):
+            content = json.dumps(content, indent=2, ensure_ascii=False)
+        p = out_dir / name
+        p.write_text(content, encoding="utf-8")
+        written.append(p)
+
+    record_phase(root, run_id, PHASE_EXPORT, mode="inline", payload={
+        "cube_id": cube_id, "deck_name": deck_name, "deck_dir": str(out_dir),
+        "files_written": [p.name for p in written],
+    })
+    return written
 
 
 def phase_status(root, run_id: str, phase: str) -> str:
@@ -431,8 +522,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sp.add_parser("record")
     p.add_argument("run_id"); p.add_argument("phase")
     p.add_argument("--mode", required=True, choices=VALID_MODES)
-    p.add_argument("--payload-file"); p.add_argument("--subagents-file")
+    p.add_argument("--payload-file")
+    p.add_argument("--agents-file", "--subagents-file", dest="agents_file")
     p.add_argument("--retry", action="store_true"); p.add_argument("--root", default=None)
+
+    p = sp.add_parser("export")
+    p.add_argument("run_id", nargs="?"); p.add_argument("--manifest", required=True)
+    p.add_argument("--root", default=None)
 
     p = sp.add_parser("fail")
     p.add_argument("run_id"); p.add_argument("phase")
@@ -448,7 +544,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     root = args.root or default_root()
 
     run_id = getattr(args, "run_id", None)
-    if run_id is None and args.cmd in ("status", "resume", "gate-export"):
+    if run_id is None and args.cmd in ("status", "resume", "gate-export", "export"):
         run_id = current_run_id(root)
         if not run_id:
             print("no active run (runs/CURRENT is missing)", file=sys.stderr)
@@ -466,10 +562,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             path = record_phase(
                 root, run_id, args.phase, mode=args.mode,
                 payload=_load_json_file(args.payload_file),
-                subagent_results=_load_json_file(args.subagents_file) or [],
+                agent_results=_load_json_file(args.agents_file) or [],
                 retry=args.retry,
             )
             print(f"recorded {path}")
+            return 0
+
+        if args.cmd == "export":
+            written = export_deck(root, run_id, _load_json_file(args.manifest) or {})
+            print("Saved:")
+            for p in written:
+                print(f"  {p}")
             return 0
 
         if args.cmd == "fail":

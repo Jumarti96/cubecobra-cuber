@@ -57,7 +57,7 @@ cp .env.example .env
 # Edit .env and fill in LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 
 # 5. Install the Claude Code environment (skills + hooks)
-python scripts/install_claude_env.py
+python agent_env/install_claude_env.py
 # Installs skills into .claude/skills/, verifies the project settings and
 # the build-deck export-gate hook, and smoke-tests the gate. Re-run any
 # time you edit a skill or pull updates. Use --check to verify without
@@ -68,7 +68,7 @@ python scripts/install_claude_env.py
 
 Two skill layouts are supported: a flat `skills/<name>.md`, or a folder `skills/<name>/` containing `SKILL.md` plus a `references/` directory for material the skill loads at point of use (`build-deck` uses the folder layout). `skills/` is the source of truth — edit there, never in `.claude/skills/`, which is overwritten on every install.
 
-`.claude/settings.json` is committed and carries the project hooks, so a fresh clone gets them. Machine-specific settings (permission allowlists, absolute paths) go in `.claude/settings.local.json`, which is gitignored and merges on top. See [`scripts/README.md`](scripts/README.md) for the full picture.
+`.claude/settings.json` is committed and carries the project hooks, so a fresh clone gets them. Machine-specific settings (permission allowlists, absolute paths) go in `.claude/settings.local.json`, which is gitignored and merges on top. See [`agent_env/README.md`](agent_env/README.md) for the full picture.
 
 **Optional: install as a command**
 
@@ -341,7 +341,7 @@ python -m cuber.orchestrator resume [<run_id>]       # what passed, what didn't,
 
 - **Phase 5B and Phase 9 will not record with `--mode inline`**, nor with fewer than two subagent results. Dispatch ids must be distinct, reports must carry their `BEGIN`/`END` markers, and the roles must cover the phase.
 - **A failed dispatch writes `phase_XX.FAILED.json`** — never a passing artifact — and exits non-zero. Recovering requires an explicit `--retry`, which archives the failure rather than erasing it, so the run keeps a permanent record that a gate failed.
-- **Export is blocked outside the model's judgment.** A `PreToolUse` hook (`scripts/gate_export.py`, wired in the committed `.claude/settings.json`) denies any write into `cubes/<id>/decks/` unless the current run's `phase_09_grill.json` exists and validates.
+- **Export is blocked outside the model's judgment.** A `PreToolUse` hook (`agent_env/gate_export.py`, wired in the committed `.claude/settings.json`) denies any write into `cubes/<id>/decks/` unless the current run's `phase_09_grill.json` exists and validates.
 
 One honest limitation: `mode` and the subagent reports are self-reported, and no Python check can prove a report came from a real subagent. What the design buys is that skipping a gate now requires writing a fabricated report to disk — a discrete, greppable artifact — rather than silently omitting a step you would only discover by re-reading the transcript.
 

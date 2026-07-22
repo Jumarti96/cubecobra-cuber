@@ -33,7 +33,9 @@ This binds every card whose value is a function of how many others qualify: cost
 
 ## Phase Protocol — The Orchestrator Is The Gate
 
-**The run is tracked by `cuber/orchestrator.py`, not by your own discipline.** Every phase records a JSON artifact in `runs/<run_id>/`; export is blocked by a PreToolUse hook until `phase_09_grill.json` exists and validates. You do not decide whether a gate was satisfied — the orchestrator does, and it can refuse you.
+**The run is tracked by `cuber/orchestrator.py`, not by your own discipline.** Every phase records a JSON artifact in `runs/<run_id>/`, and the orchestrator — not you — performs the deck export, refusing it unless every gate passed. You do not decide whether a gate was satisfied.
+
+This is plain Python with no harness dependency: it works the same under Claude Code, another agent CLI, or a bare terminal.
 
 **Read `references/orchestrator.md` at Phase 0 start.** It holds the full command reference.
 
@@ -46,12 +48,14 @@ python -m cuber.orchestrator init --cube <cube-id>
 Then, after each phase's work is genuinely done, record it — with the phase's real start/end times and, for subagent phases, the actual returned reports:
 
 ```
-python -m cuber.orchestrator record <run_id> <phase> --mode subagent \
+python -m cuber.orchestrator record <run_id> <phase> --mode independent \
     --payload-file  _workspace/<run-token>/payload.json \
-    --subagents-file _workspace/<run-token>/subagents.json
+    --agents-file  _workspace/<run-token>/agents.json
 ```
 
-**Phase 5B and Phase 9 will not record with `--mode inline`, and will not record with fewer than two subagent results.** The orchestrator rejects the write; there is no flag that relaxes this. Recording them means pasting each agent's real report (with its BEGIN/END markers, ≥200 chars) under a distinct `dispatch_id`.
+**Phase 5B and Phase 9 will not record with `--mode inline`, and will not record with fewer than two agent results.** The orchestrator rejects the write; there is no flag that relaxes this. Recording them means pasting each agent's real report (with its BEGIN/END markers, ≥200 chars) under a distinct `dispatch_id`.
+
+What these phases require is **independence** — two agents that did not see each other's output — not any particular harness feature. Note how you achieved it in each result's `dispatch_method` (`claude-subagent`, `separate-process`, `api-call`, …).
 
 ### When a subagent dispatch fails
 
@@ -61,7 +65,7 @@ API session limit, credit exhaustion, tool error, malformed report — **any** f
 python -m cuber.orchestrator fail <run_id> <phase> --error "<what actually happened>"
 ```
 
-This writes `phase_XX.FAILED.json`, writes no passing artifact, and exits non-zero. Then **STOP and report the failure to the user.** Do not run a mechanical check inline and call the phase done. Do not hand-write an artifact. Do not proceed to export — the hook will block it anyway, and trying is worse than stopping.
+This writes `phase_XX.FAILED.json`, writes no passing artifact, and exits non-zero. Then **STOP and report the failure to the user.** Do not run a mechanical check inline and call the phase done. Do not hand-write an artifact. Do not proceed to export — `orchestrator export` will refuse, and trying is worse than stopping.
 
 A `FAILED` marker blocks the phase until an explicit `--retry`, which archives the failure rather than erasing it. The failure stays in the run directory permanently.
 
@@ -87,7 +91,7 @@ No banner, no phase. The banner is written the moment the phase begins — not r
 2. Every dispatch prompt mandates that the agent's report **open** with `=== <ROLE> REPORT — BEGIN ===` and **close** with `=== <ROLE> REPORT — END ===`.
 3. When a report returns, verify **both** markers are present before using anything in it. A report missing either marker is incomplete — announce that and re-dispatch that agent; never adjudicate from a partial report.
 4. After the check passes, announce: `✔ <role> report verified`.
-5. Save each report verbatim into the phase's `--subagents-file` and record the phase. The orchestrator re-checks the markers; a report that fails step 3 will also fail the record.
+5. Save each report verbatim into the phase's `--agents-file` and record the phase. The orchestrator re-checks the markers; a report that fails step 3 will also fail the record.
 
 ---
 
@@ -337,8 +341,8 @@ Both Phase 9 agents read only this file — never `enriched.json`, the working p
 
 **On success**, record the phase with both verbatim reports:
 ```
-python -m cuber.orchestrator record <run_id> phase_09_grill --mode subagent \
-    --subagents-file _workspace/<run-token>/grill_subagents.json \
+python -m cuber.orchestrator record <run_id> phase_09_grill --mode independent \
+    --agents-file  _workspace/<run-token>/grill_agents.json \
     --payload-file  _workspace/<run-token>/grill_adjudication.json
 ```
 
@@ -402,11 +406,19 @@ It prints every phase as `PASS` / `FAILED` / `INVALID` / `pending`, with the rea
 
 **If the command exits non-zero, STOP. Do not write any file.** Show the user the table, name the incomplete gate(s), and hand it to them — they decide whether to re-run the gate or override. Never hand-write an artifact to turn a row green, and never save "the deck is fine anyway."
 
-The export attempt is independently blocked by the PreToolUse hook (`scripts/gate_export.py`), so a deck write with a bad grill fails whether or not you run this step. Run it anyway — a blocked write mid-save is a worse experience than an honest table.
+The export attempt is independently blocked by the PreToolUse hook (`agent_env/gate_export.py`), so a deck write with a bad grill fails whether or not you run this step. Run it anyway — a blocked write mid-save is a worse experience than an honest table.
 
 On confirmation, prompt for a deck name if not already provided. Sanitize to a filesystem-safe slug (lowercase, alphanumeric + hyphens).
 
-All four files go into a single subfolder: `cubes/<id>/decks/<name>/`
+All four files go into a single subfolder: `cubes/<id>/decks/<name>/`.
+
+**Do not write them yourself.** Build a manifest and hand it to the orchestrator, which re-checks every gate and performs the write:
+
+```
+python -m cuber.orchestrator export <run_id> --manifest _workspace/<run-token>/manifest.json
+```
+
+`{cube_id, deck_name, files: {"deck.json": {...}, "deck.tsv": "...", "deck.mwDeck": "...", "analysis.md": "..."}}`. It refuses any filename outside those four, and checks the gates before the first byte is written — a refusal leaves no partial deck behind. This is the only sanctioned way to save, and it works in any environment; a hand-written deck file bypasses the gate and is a process violation even when the deck is fine.
 
 File-by-file specs — the `deck.json` schema, `deck.tsv` columns, `exporter.write_mwdeck`, and the `analysis.md` frontmatter and section structure — are in `references/render-and-save.md`.
 

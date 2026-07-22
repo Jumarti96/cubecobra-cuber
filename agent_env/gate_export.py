@@ -11,7 +11,7 @@ Wire it up in .claude/settings.local.json:
     "PreToolUse": [{
       "matcher": "Write|Edit|Bash",
       "hooks": [{"type": "command",
-                 "command": "python \\"<repo>/scripts/gate_export.py\\""}]
+                 "command": "python \\"<repo>/agent_env/gate_export.py\\""}]
     }]
 
 Fail-open on malformed input: a hook that crashes on an unexpected event shape
@@ -35,45 +35,25 @@ DECK_OUTPUT_RE = re.compile(r"cubes/[^/]+/decks/", re.IGNORECASE)
 
 PATH_KEYS = ("file_path", "notebook_path", "path")
 
-#: A shell command only counts as a deck write if it also carries a write verb.
-#: Naming the path — grep, ls, cat, a git commit message quoting it — is not a
-#: write, and blocking those makes the hook unusable.
-WRITE_VERB_RE = re.compile(
-    r"(>>?\s*\S*cubes/"                       # redirect into the path
-    r"|\b(?:cp|mv|tee|touch|install|rsync|dd)\b"
-    r"|\bmkdir\b"
-    r"|\bopen\s*\([^)]*['\"][wax]"            # python open(..., 'w')
-    r"|\bwrite_text\b|\bwrite_bytes\b|\bshutil\.(?:copy|move)"
-    r"|\bSet-Content\b|\bOut-File\b|\bAdd-Content\b|\bNew-Item\b"
-    r"|\bwrite_mwdeck\b|\bwrite_deck_analysis_md\b)",   # this repo's exporters
-    re.IGNORECASE,
-)
-
-
 def is_deck_output_path(path: str) -> bool:
     if not path:
         return False
     return bool(DECK_OUTPUT_RE.search(str(path).replace("\\", "/")))
 
 
-def is_deck_write_command(command: str) -> bool:
-    """True only when a shell command both names the deck dir AND writes."""
-    if not command:
-        return False
-    norm = str(command).replace("\\", "/")
-    return bool(DECK_OUTPUT_RE.search(norm)) and bool(WRITE_VERB_RE.search(norm))
-
-
 def _targets(event: dict):
-    """Every string in the event that could name a write target."""
-    tool = event.get("tool_name", "")
+    """Every string in the event that could name a write target.
+
+    Path-based tools only. An earlier version also scanned shell commands for
+    a deck path plus a write verb; it was dropped because it false-positived on
+    every command that merely NAMED the path (`grep`, `git commit -m "..."`),
+    and because the real fix is architectural: `orchestrator export` is the only
+    sanctioned writer, so there is no unguarded shell path worth policing. This
+    hook is now a thin backstop against a stray direct write, not the mechanism.
+    """
     ti = event.get("tool_input") or {}
     if not isinstance(ti, dict):
         return []
-    if tool in ("Bash", "PowerShell"):
-        cmd = str(ti.get("command", ""))
-        # Shell commands are matched by write-verb, not by mere mention.
-        return [cmd] if is_deck_write_command(cmd) else []
     return [str(ti[k]) for k in PATH_KEYS if ti.get(k)]
 
 

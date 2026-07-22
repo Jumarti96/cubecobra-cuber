@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Install and verify the whole Claude Code environment for this repo.
 
-    python scripts/install_claude_env.py            # install + verify
-    python scripts/install_claude_env.py --check    # verify only, change nothing
+    python agent_env/install_claude_env.py            # install + verify
+    python agent_env/install_claude_env.py --check    # verify only, change nothing
 
 This is the single entry point a new clone runs. It:
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,7 +55,7 @@ def head(msg):
 
 def install_skills(check_only: bool) -> None:
     head("1. Skills (skills/ -> .claude/skills/)")
-    installer = ROOT / "scripts" / "install_skills.py"
+    installer = ROOT / "agent_env" / "install_skills.py"
     if not installer.is_file():
         bad(f"missing {installer}")
         return
@@ -102,15 +103,29 @@ def check_settings() -> None:
     gate_cmds = [h.get("command", "") for entry in pre for h in (entry.get("hooks") or [])
                  if "gate_export.py" in h.get("command", "")]
     if not gate_cmds:
-        bad("no PreToolUse hook invoking scripts/gate_export.py — export gate is OFF")
+        bad("no PreToolUse hook invoking agent_env/gate_export.py — export gate is OFF")
     else:
         ok(f"export-gate hook wired ({len(gate_cmds)} entry)")
         for cmd in gate_cmds:
             if "CLAUDE_PROJECT_DIR" not in cmd and str(ROOT) not in cmd:
                 warn(f"hook command may not be portable: {cmd}")
 
-    if not (ROOT / "scripts" / "gate_export.py").is_file():
-        bad("scripts/gate_export.py is missing")
+            # The path the hook actually invokes must resolve. Python exits 2 on
+            # "can't open file", which is ALSO the hook's block code — so a hook
+            # pointing at a moved script blocks every Write/Edit in the session.
+            for ref in re.findall(r"[\w$/{}.\\-]*gate_export\.py", cmd):
+                rel = ref.split("CLAUDE_PROJECT_DIR")[-1].lstrip("}/\\")
+                if rel and not (ROOT / rel).is_file():
+                    bad(f"hook points at {rel!r}, which does not exist. Every "
+                        f"Write/Edit will be blocked until this is fixed.")
+
+            if "[ -f " not in cmd and "test -f" not in cmd:
+                warn("hook does not guard against its own script being missing; "
+                     "add a [ -f \"$S\" ] || exit 0 check so a moved script "
+                     "cannot lock up the session")
+
+    if not (ROOT / "agent_env" / "gate_export.py").is_file():
+        bad("agent_env/gate_export.py is missing")
 
     # A project hook duplicated in settings.local.json runs twice per tool call.
     local = ROOT / ".claude" / "settings.local.json"
@@ -150,7 +165,7 @@ def check_orchestrator() -> None:
 
 def _fire_hook(event: dict, runs_root: Path):
     env = {**os.environ, "CUBER_RUNS_ROOT": str(runs_root), "PYTHONIOENCODING": "utf-8"}
-    return subprocess.run([sys.executable, str(ROOT / "scripts" / "gate_export.py")],
+    return subprocess.run([sys.executable, str(ROOT / "agent_env" / "gate_export.py")],
                           input=json.dumps(event), capture_output=True, text=True,
                           env=env, cwd=str(ROOT))
 
