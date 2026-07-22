@@ -2,10 +2,12 @@
 
 Setup and enforcement scripts for agent environments.
 
-**Everything AI-environment-related lives here.** The two exceptions are files
-whose location is fixed by the tool that reads them: `.claude/settings.json`
-(Claude Code) and root `AGENTS.md` (the cross-CLI convention). Those stay where
-they are discovered; the tooling that maintains them is here.
+**Everything AI-environment-related lives here.** The one exception is
+`.claude/settings.json`, whose location is fixed by the tool that reads it;
+the tooling that maintains it is here.
+
+Nothing in this folder is required to run the workflow. Another CLI needs only
+`skills/` (plain markdown) and `cuber/orchestrator.py`.
 
 ## Portability
 
