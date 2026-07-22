@@ -52,3 +52,6 @@ _workspace/
 
 # Current cube config (local only — do not commit)
 .cuber-config.json
+
+# Orchestrator run ledger (local build state)
+runs/

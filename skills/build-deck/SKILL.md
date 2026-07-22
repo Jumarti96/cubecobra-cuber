@@ -31,7 +31,49 @@ This binds every card whose value is a function of how many others qualify: cost
 
 ---
 
-## Phase Protocol — Announce, Then Work
+## Phase Protocol — The Orchestrator Is The Gate
+
+**The run is tracked by `cuber/orchestrator.py`, not by your own discipline.** Every phase records a JSON artifact in `runs/<run_id>/`; export is blocked by a PreToolUse hook until `phase_09_grill.json` exists and validates. You do not decide whether a gate was satisfied — the orchestrator does, and it can refuse you.
+
+**Read `references/orchestrator.md` at Phase 0 start.** It holds the full command reference.
+
+At the start of every build:
+
+```
+python -m cuber.orchestrator init --cube <cube-id>
+```
+
+Then, after each phase's work is genuinely done, record it — with the phase's real start/end times and, for subagent phases, the actual returned reports:
+
+```
+python -m cuber.orchestrator record <run_id> <phase> --mode subagent \
+    --payload-file  _workspace/<run-token>/payload.json \
+    --subagents-file _workspace/<run-token>/subagents.json
+```
+
+**Phase 5B and Phase 9 will not record with `--mode inline`, and will not record with fewer than two subagent results.** The orchestrator rejects the write; there is no flag that relaxes this. Recording them means pasting each agent's real report (with its BEGIN/END markers, ≥200 chars) under a distinct `dispatch_id`.
+
+### When a subagent dispatch fails
+
+API session limit, credit exhaustion, tool error, malformed report — **any** failure, no exceptions:
+
+```
+python -m cuber.orchestrator fail <run_id> <phase> --error "<what actually happened>"
+```
+
+This writes `phase_XX.FAILED.json`, writes no passing artifact, and exits non-zero. Then **STOP and report the failure to the user.** Do not run a mechanical check inline and call the phase done. Do not hand-write an artifact. Do not proceed to export — the hook will block it anyway, and trying is worse than stopping.
+
+A `FAILED` marker blocks the phase until an explicit `--retry`, which archives the failure rather than erasing it. The failure stays in the run directory permanently.
+
+### Resuming
+
+```
+python -m cuber.orchestrator resume <run_id>
+```
+
+Prints every phase as PASS / FAILED / INVALID / pending with the reason, and names the phase to restart from. Use it whenever a session is interrupted or you are unsure what actually ran.
+
+### Announce, then work
 
 **Every phase opens with a banner line to the user, before any phase work:**
 
@@ -39,12 +81,13 @@ This binds every card whose value is a function of how many others qualify: cost
 
 No banner, no phase. The banner is written the moment the phase begins — not retroactively, not batched with the next one. A phase whose banner never appeared is a phase that was skipped.
 
-**Subagent protocol (the Phase 5B shape judge and the Phase 9 agents):**
+**Subagent protocol (the Phase 5B sketchers + judge and the Phase 9 agents):**
 
 1. When dispatching, announce it: `⏳ Dispatching Proposer + Challenger`.
 2. Every dispatch prompt mandates that the agent's report **open** with `=== <ROLE> REPORT — BEGIN ===` and **close** with `=== <ROLE> REPORT — END ===`.
 3. When a report returns, verify **both** markers are present before using anything in it. A report missing either marker is incomplete — announce that and re-dispatch that agent; never adjudicate from a partial report.
 4. After the check passes, announce: `✔ <role> report verified`.
+5. Save each report verbatim into the phase's `--subagents-file` and record the phase. The orchestrator re-checks the markers; a report that fails step 3 will also fail the record.
 
 ---
 
@@ -77,6 +120,7 @@ Detailed mechanics live in `references/` under this skill's base directory. **At
 
 | File | Read at |
 |------|---------|
+| `references/orchestrator.md` | Phase 0 start (run tracking + gates) |
 | `references/workspace-and-pool.md` | Phase 0 start |
 | `references/discovery.md` | Phase 2 start (covers Phases 2–4) |
 | `references/build.md` | Phase 5 start (covers Phases 5–6b) |
@@ -289,6 +333,15 @@ Both Phase 9 agents read only this file — never `enriched.json`, the working p
 
 **Read `references/challenger-template.md` now.** Spawn the two agents it describes — a Proposer that defends every card with an oracle quote, and a Challenger that attacks the deck independently and runs the full checklist (membership, oracle, restrictions, identity fit, better alternatives, proportional validation, sideboard cohesion, mana re-run, **derivation audit**, **absence audit**, pipeline viability, and **failure-mode review**). Neither agent sees the other's output during generation. Both dispatches and both returned reports follow the subagent protocol in **Phase Protocol** — verify the BEGIN/END markers before adjudicating.
 
+**If either dispatch fails for any reason** — API session limit, credit exhaustion, tool error, a report missing its markers after a re-dispatch — run `python -m cuber.orchestrator fail <run_id> phase_09_grill --error "<what happened>"` and **stop.** Report it to the user. There is no inline substitute for this phase: a mechanical check you run yourself is not a second independent agent, and recording it as one is fabrication. The orchestrator will not accept `--mode inline` here and the export hook will block the save regardless.
+
+**On success**, record the phase with both verbatim reports:
+```
+python -m cuber.orchestrator record <run_id> phase_09_grill --mode subagent \
+    --subagents-file _workspace/<run-token>/grill_subagents.json \
+    --payload-file  _workspace/<run-token>/grill_adjudication.json
+```
+
 ### Resolve Grill (you adjudicate)
 
 You built this deck, so you defend it and judge the Challenger's findings. Every finding arrives tagged by the Challenger as **BLOCKING** (the deck cannot finalize while it stands) or **ADVISORY** (yours to decide on the merits). Resolution is a table, a repair, an approval round, and a gate — in that order:
@@ -339,21 +392,17 @@ Ask: **"Save this deck? [y/N]"**
 
 ## Phase 11: Save
 
-**Step 0 — GATE STATUS (mandatory; print before writing ANY file).** No deck file is written until this table has been printed. Emit one row per phase 0–9, in order, with a verdict of `PASS` / `FAIL` / `SKIPPED` and, for every row that is not `PASS`, a one-line reason:
+**Step 0 — GATE STATUS (mandatory; print before writing ANY file).** Do not compose this table from memory. Run the orchestrator and paste its output verbatim:
 
 ```
-GATE STATUS
-| Phase | Name | Status | Reason (if not PASS) |
-|---|---|---|---|
-| 0 | Card Pool Definition | PASS | |
-| 1 | Interview | PASS | |
-...
-| 9 | Self-Grill | SKIPPED | Challenger dispatch failed — API limit |
+python -m cuber.orchestrator resume <run_id>
 ```
 
-Derive each verdict from what actually happened in THIS run — the phase banner appeared and the phase's work completed (`PASS`), the phase ran and its gate failed (`FAIL`), or the phase never ran, was bypassed, or its work was substituted inline (`SKIPPED`). A phase whose banner never appeared is `SKIPPED`. Do not mark a phase `PASS` from memory of how the pipeline is supposed to go; if you cannot point to the evidence, it is not a `PASS`.
+It prints every phase as `PASS` / `FAILED` / `INVALID` / `pending`, with the reason for anything not `PASS`, read off the artifacts on disk. That is the gate status — your recollection of the run is not evidence, and a phase you *believe* passed but never recorded shows as `pending`, which is the correct answer.
 
-**If any row is `SKIPPED`: STOP. Do not write any file.** Print the table, name the skipped gate(s) and why, and hand it to the user — they decide whether to re-run the gate or override. A `FAIL` row is likewise not savable on your own authority: Phase 9's finalization gate governs, and reaching Phase 11 with a `FAIL` means something went wrong upstream — surface it rather than saving. Never silently downgrade a `SKIPPED` to `PASS`, and never save "the deck is fine anyway."
+**If the command exits non-zero, STOP. Do not write any file.** Show the user the table, name the incomplete gate(s), and hand it to them — they decide whether to re-run the gate or override. Never hand-write an artifact to turn a row green, and never save "the deck is fine anyway."
+
+The export attempt is independently blocked by the PreToolUse hook (`scripts/gate_export.py`), so a deck write with a bad grill fails whether or not you run this step. Run it anyway — a blocked write mid-save is a worse experience than an honest table.
 
 On confirmation, prompt for a deck name if not already provided. Sanitize to a filesystem-safe slug (lowercase, alphanumeric + hyphens).
 
