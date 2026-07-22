@@ -56,14 +56,19 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env and fill in LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 
-# 5. Install Claude Code skills
-python scripts/install_skills.py
-# Copies skills into .claude/skills/ where Claude Code reads them.
-# Two layouts are supported: a flat skills/<name>.md, or a folder
-# skills/<name>/ containing SKILL.md plus a references/ directory for
-# material the skill loads at point of use (build-deck uses the folder
-# layout). Re-run this any time you edit a skill or pull updates.
+# 5. Install the Claude Code environment (skills + hooks)
+python scripts/install_claude_env.py
+# Installs skills into .claude/skills/, verifies the project settings and
+# the build-deck export-gate hook, and smoke-tests the gate. Re-run any
+# time you edit a skill or pull updates. Use --check to verify without
+# changing anything (exits non-zero if something is broken).
+#
+# THEN RESTART CLAUDE CODE — skills and hooks are read at startup.
 ```
+
+Two skill layouts are supported: a flat `skills/<name>.md`, or a folder `skills/<name>/` containing `SKILL.md` plus a `references/` directory for material the skill loads at point of use (`build-deck` uses the folder layout). `skills/` is the source of truth — edit there, never in `.claude/skills/`, which is overwritten on every install.
+
+`.claude/settings.json` is committed and carries the project hooks, so a fresh clone gets them. Machine-specific settings (permission allowlists, absolute paths) go in `.claude/settings.local.json`, which is gitignored and merges on top. See [`scripts/README.md`](scripts/README.md) for the full picture.
 
 **Optional: install as a command**
 
@@ -322,6 +327,25 @@ Builds a deck from your cube in any supported format. Uses a discovery-first app
 - **Phase 6b — Structural Gate:** four checks mechanized from the deck-building methodology in `cuber/deck_checks.py`: **assembly** (critical-mass math — every engine role must be seen with p ≥ 0.75 by the thesis turn; hard gate; functional copies carry per-copy **reliability weights**, so a conditional effect — a tutor whose cost can eat the fetched piece, a cast-from-hand-only trigger — is discounted rather than counted whole, with the justification recorded and audited), **coverage** (the maindeck declares an answer or a written concession for each of five threat classes; hard gate), **curve shape** (per-archetype MV bands plus a top-end rule; WARN-tier) and a **goldfish simulation** (seeded Monte Carlo keepability/curve-out; WARN-tier). WARNs require a recorded response, not a rebuild. The pipeline thesis now carries a `goldfish_turn` and `default_role` these checks test against.
 - **Phases 6–9:** Mana audit, sideboard, grill bundle, self-grill: two agents run in parallel from the grill bundle — a **Proposer** that defends every card with an oracle quote, and a **Challenger** that attacks the deck independently (hard legality checks, per-card oracle verification, a **derivation audit** that recomputes the land/pip math and recounts every count-dependent verdict, and an **absence audit** that asks "what strong pool card is missing?" oracle-text-first). The orchestrator adjudicates findings; legality violations, audit regressions, structural-gate hard failures, and counts that fail to reproduce are non-negotiable.
 - **Re-evaluation:** If the Challenger declares a pipeline fundamentally broken, the skill automatically tries the next pipeline from the Phase 3 shortlist without restarting discovery.
+
+**Gate enforcement — the run orchestrator**
+
+The phases that mandate *independent subagents* — Phase 5B (sketchers + judge) and Phase 9 (Proposer + Challenger) — are the ones most likely to be quietly run inline, especially when an API session limit kills a dispatch mid-run. `cuber/orchestrator.py` makes that structurally visible instead of leaving it to the model's discipline.
+
+Each build is a run directory under `runs/<run_id>/`, one JSON artifact per phase, recording the phase, its start/end timestamps, whether it ran inline or as dispatched subagents, and the returned subagent reports:
+
+```bash
+python -m cuber.orchestrator init --cube <cube-id>   # start a tracked run
+python -m cuber.orchestrator resume [<run_id>]       # what passed, what didn't, where to restart
+```
+
+- **Phase 5B and Phase 9 will not record with `--mode inline`**, nor with fewer than two subagent results. Dispatch ids must be distinct, reports must carry their `BEGIN`/`END` markers, and the roles must cover the phase.
+- **A failed dispatch writes `phase_XX.FAILED.json`** — never a passing artifact — and exits non-zero. Recovering requires an explicit `--retry`, which archives the failure rather than erasing it, so the run keeps a permanent record that a gate failed.
+- **Export is blocked outside the model's judgment.** A `PreToolUse` hook (`scripts/gate_export.py`, wired in the committed `.claude/settings.json`) denies any write into `cubes/<id>/decks/` unless the current run's `phase_09_grill.json` exists and validates.
+
+One honest limitation: `mode` and the subagent reports are self-reported, and no Python check can prove a report came from a real subagent. What the design buys is that skipping a gate now requires writing a fabricated report to disk — a discrete, greppable artifact — rather than silently omitting a step you would only discover by re-reading the transcript.
+
+Full command reference: [`skills/build-deck/references/orchestrator.md`](skills/build-deck/references/orchestrator.md).
 
 **Example:** `/build-deck obc` → "40-card, Competitive intent, surprise me on colors"
 
