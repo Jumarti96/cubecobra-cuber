@@ -370,6 +370,18 @@ Saved:
   cubes/<id>/decks/<name>/analysis.md
 ```
 
+### Post-save — REJECTED & RISKY (mandatory; print after every save)
+
+Printed to the user in chat, after the four paths. Not written to any file. Three parts, always all three, in order. This is a candour report, not a defence of the build — you have already saved; nothing here is a sales pitch.
+
+**1. Five highest-power pool cards NOT in the deck.** Rank by raw card power **within the working pool** (`_workspace/<run-token>/working_pool.json`) restricted to `core_colors` + `splash_colors` — the whole pool, not just the Phase 5A `include_candidates`, and not the Phase 9 absence-audit list. There is no power rating in the data; judge it from `oracle_text` and say so. One sentence of rejection reason each, and the reason must be about THIS deck (wrong axis, unfeedable cost, off-curve, pip demand the mana base cannot serve), not a generic slight. If a card was cut for no reason you can defend, say **"no principled reason"** — that is a legitimate and expected entry, not a failure.
+
+**2. Every general heuristic you applied, with its local justification.** One row per heuristic — land count, curve shape, protection/interaction counts, ramp count, removal density, colour ratios, anything you reached for as a rule of thumb. Each needs the specific card text or the actual math from THIS list that justifies it here (per the Counts Principle: numerator/denominator against the deck you built). A heuristic you cannot ground in this deck's cards is reported as ungrounded — write **"no principled reason — applied as a default"**. Do not construct a post-hoc rationalization to fill the cell; an honest ungrounded row is the point of the section.
+
+**3. What you are genuinely unsure about.** Open questions, judgement calls that could have gone the other way, thin spots you accepted, counts near a threshold, anything the grill resolved by argument rather than by evidence. If you are genuinely unsure of nothing, say so plainly — but check first: a build with zero uncertainty is rarer than it feels.
+
+Never soften an entry to make the deck look better, and never omit a part because it would be short.
+
 ---
 
 ## Tool Selection Table
