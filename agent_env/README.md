@@ -2,12 +2,23 @@
 
 Setup and enforcement scripts for agent environments.
 
-**Everything AI-environment-related lives here.** The one exception is
-`.claude/settings.json`, whose location is fixed by the tool that reads it;
-the tooling that maintains it is here.
+**Everything in this folder is Claude Code setup, and none of it is required
+to run the workflow.** Another CLI needs only `skills/` (plain markdown) and
+`cuber/orchestrator.py` (plain Python) — there is nothing to install.
 
-Nothing in this folder is required to run the workflow. Another CLI needs only
-`skills/` (plain markdown) and `cuber/orchestrator.py`.
+| Environment | Run |
+|---|---|
+| Claude Code | `python agent_env/install_claude_env.py` |
+| Any other CLI | nothing — point the tool at `skills/`, use `orchestrator` directly |
+
+`install_skills.py` is Claude-specific too: it copies `skills/` into
+`.claude/skills/`, which only Claude Code reads. Use it as a shortcut when you
+have only edited a skill.
+
+`.claude/settings.json` is **generated** by `install_claude_env.py` and is not
+committed, so cloning the repo never changes anyone's environment unasked. The
+installer merges into an existing file and is idempotent — your own permissions
+and hooks are preserved.
 
 ## Portability
 

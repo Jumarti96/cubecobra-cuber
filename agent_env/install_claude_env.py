@@ -84,12 +84,77 @@ def install_skills(check_only: bool) -> None:
 
 # ── 2. settings + hook wiring ─────────────────────────────────────────────────
 
-def check_settings() -> None:
+#: The hook command. Two guards, both load-bearing:
+#:   [ -f "$S" ]  — python exits 2 on "can't open file", which is ALSO the hook's
+#:                  block code, so a moved script would block every Write/Edit.
+#:   exec         — the block is signalled by exit 2; any wrapper that swallows
+#:                  or retries on non-zero silently disables the gate.
+HOOK_COMMAND = (
+    'sh -c \'S="$CLAUDE_PROJECT_DIR/agent_env/gate_export.py"; '
+    '[ -f "$S" ] || exit 0; '
+    'PY=$(command -v python3 || command -v python) || exit 0; '
+    'exec "$PY" "$S"\''
+)
+
+HOOK_ENTRY = {
+    "matcher": "Write|Edit",
+    "hooks": [{"type": "command", "command": HOOK_COMMAND,
+               "statusMessage": "Checking build-deck export gate..."}],
+}
+
+
+def install_hook(check_only: bool) -> None:
+    """Create or update .claude/settings.json with the export-gate hook.
+
+    settings.json is NOT committed — it is generated here. That keeps the repo
+    free of anything that changes a collaborator's environment without being
+    asked: a non-Claude user clones and never runs this, so no hook appears.
+    """
     head("2. Claude settings & export-gate hook")
 
     project = ROOT / ".claude" / "settings.json"
+    data = {}
+    if project.is_file():
+        try:
+            data = json.loads(project.read_text(encoding="utf-8"))
+        except ValueError as e:
+            bad(f".claude/settings.json is not valid JSON ({e}); fix or delete it")
+            return
+
+    pre = (data.get("hooks") or {}).get("PreToolUse") or []
+    present = [h for e in pre for h in (e.get("hooks") or [])
+               if "gate_export.py" in h.get("command", "")]
+
+    if check_only:
+        if not project.is_file():
+            warn("no .claude/settings.json — run without --check to install the "
+                 "optional export-gate hook")
+        elif not present:
+            warn("optional export-gate hook not installed. The gate still holds: "
+                 "`orchestrator export` is the only sanctioned deck writer and "
+                 "re-checks every phase. The hook only backstops a hand-written deck.")
+        else:
+            ok("export-gate hook wired")
+        return
+
+    if present:
+        # Refresh in place so guard fixes reach existing installs.
+        for h in present:
+            h["command"] = HOOK_COMMAND
+        ok("export-gate hook already wired (command refreshed)")
+    else:
+        data.setdefault("hooks", {}).setdefault("PreToolUse", []).append(HOOK_ENTRY)
+        ok("export-gate hook installed")
+
+    data.setdefault("env", {}).setdefault("PYTHONIOENCODING", "utf-8")
+    project.parent.mkdir(parents=True, exist_ok=True)
+    project.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _check_settings_health()
+
+
+def _check_settings_health() -> None:
+    project = ROOT / ".claude" / "settings.json"
     if not project.is_file():
-        bad(f"missing {project} — the export gate will not be enforced")
         return
 
     try:
@@ -102,18 +167,7 @@ def check_settings() -> None:
     pre = (data.get("hooks") or {}).get("PreToolUse") or []
     gate_cmds = [h.get("command", "") for entry in pre for h in (entry.get("hooks") or [])
                  if "gate_export.py" in h.get("command", "")]
-    if not gate_cmds:
-        # NOT a failure. The gate is enforced by `orchestrator export`, which
-        # checks every gate in the same function that writes the deck. The hook
-        # is an optional backstop that catches a deck written by hand instead of
-        # through export. A setup without it is valid — the skill does not
-        # reference it and does not need it.
-        warn("optional export-gate hook not installed (agent_env/gate_export.py). "
-             "The gate still holds: `orchestrator export` is the only sanctioned "
-             "deck writer and re-checks every phase. The hook only adds a backstop "
-             "against a hand-written deck file.")
-    else:
-        ok(f"export-gate hook wired ({len(gate_cmds)} entry)")
+    if gate_cmds:
         for cmd in gate_cmds:
             if "CLAUDE_PROJECT_DIR" not in cmd and str(ROOT) not in cmd:
                 warn(f"hook command may not be portable: {cmd}")
@@ -218,7 +272,7 @@ def main(argv=None) -> int:
     print(f"{DIM}{ROOT}{OFF}")
 
     install_skills(args.check)
-    check_settings()
+    install_hook(args.check)
     check_orchestrator()
     smoke_test_gate()
 

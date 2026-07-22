@@ -68,7 +68,9 @@ python agent_env/install_claude_env.py
 
 Two skill layouts are supported: a flat `skills/<name>.md`, or a folder `skills/<name>/` containing `SKILL.md` plus a `references/` directory for material the skill loads at point of use (`build-deck` uses the folder layout). `skills/` is the source of truth — edit there, never in `.claude/skills/`, which is overwritten on every install.
 
-`.claude/settings.json` is committed and carries the project hooks, so a fresh clone gets them. Machine-specific settings (permission allowlists, absolute paths) go in `.claude/settings.local.json`, which is gitignored and merges on top. See [`agent_env/README.md`](agent_env/README.md) for the full picture.
+**Using a different agent CLI?** Steps 1–4 are all you need. The workflow lives in `skills/` as plain markdown and the gates are enforced by `cuber/orchestrator.py` in plain Python — point your tool at `skills/build-deck/SKILL.md` and skip step 5 entirely. Step 5 and everything in `agent_env/` are Claude Code setup; nothing else depends on them.
+
+`.claude/settings.json` is **generated** by the installer, not committed, so cloning this repo never changes your environment until you ask it to. Machine-specific settings go in `.claude/settings.local.json`, which merges on top. See [`agent_env/README.md`](agent_env/README.md) for the full picture.
 
 **Optional: install as a command**
 
