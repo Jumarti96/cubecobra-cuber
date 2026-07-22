@@ -31,7 +31,53 @@ This binds every card whose value is a function of how many others qualify: cost
 
 ---
 
-## Phase Protocol — Announce, Then Work
+## Phase Protocol — The Orchestrator Is The Gate
+
+**The run is tracked by `cuber/orchestrator.py`, not by your own discipline.** Every phase records a JSON artifact in `runs/<run_id>/`, and the orchestrator — not you — performs the deck export, refusing it unless every gate passed. You do not decide whether a gate was satisfied.
+
+This is plain Python with no harness dependency: it works the same under Claude Code, another agent CLI, or a bare terminal.
+
+**Read `references/orchestrator.md` at Phase 0 start.** It holds the full command reference.
+
+At the start of every build:
+
+```
+python -m cuber.orchestrator init --cube <cube-id>
+```
+
+Then, after each phase's work is genuinely done, record it — with the phase's real start/end times and, for subagent phases, the actual returned reports:
+
+```
+python -m cuber.orchestrator record <run_id> <phase> --mode independent \
+    --payload-file  _workspace/<run-token>/payload.json \
+    --agents-file  _workspace/<run-token>/agents.json
+```
+
+**Phase 5B and Phase 9 will not record with `--mode inline`, and will not record with fewer than two agent results.** The orchestrator rejects the write; there is no flag that relaxes this. Recording them means pasting each agent's real report (with its BEGIN/END markers, ≥200 chars) under a distinct `dispatch_id`.
+
+What these phases require is **independence** — two agents that did not see each other's output — not any particular harness feature. Note how you achieved it in each result's `dispatch_method` (`claude-subagent`, `separate-process`, `api-call`, …).
+
+### When a subagent dispatch fails
+
+API session limit, credit exhaustion, tool error, malformed report — **any** failure, no exceptions:
+
+```
+python -m cuber.orchestrator fail <run_id> <phase> --error "<what actually happened>"
+```
+
+This writes `phase_XX.FAILED.json`, writes no passing artifact, and exits non-zero. Then **STOP and report the failure to the user.** Do not run a mechanical check inline and call the phase done. Do not hand-write an artifact. Do not proceed to export — `orchestrator export` will refuse, and trying is worse than stopping.
+
+A `FAILED` marker blocks the phase until an explicit `--retry`, which archives the failure rather than erasing it. The failure stays in the run directory permanently.
+
+### Resuming
+
+```
+python -m cuber.orchestrator resume <run_id>
+```
+
+Prints every phase as PASS / FAILED / INVALID / pending with the reason, and names the phase to restart from. Use it whenever a session is interrupted or you are unsure what actually ran.
+
+### Announce, then work
 
 **Every phase opens with a banner line to the user, before any phase work:**
 
@@ -39,12 +85,13 @@ This binds every card whose value is a function of how many others qualify: cost
 
 No banner, no phase. The banner is written the moment the phase begins — not retroactively, not batched with the next one. A phase whose banner never appeared is a phase that was skipped.
 
-**Subagent protocol (the Phase 5B shape judge and the Phase 9 agents):**
+**Subagent protocol (the Phase 5B sketchers + judge and the Phase 9 agents):**
 
 1. When dispatching, announce it: `⏳ Dispatching Proposer + Challenger`.
 2. Every dispatch prompt mandates that the agent's report **open** with `=== <ROLE> REPORT — BEGIN ===` and **close** with `=== <ROLE> REPORT — END ===`.
 3. When a report returns, verify **both** markers are present before using anything in it. A report missing either marker is incomplete — announce that and re-dispatch that agent; never adjudicate from a partial report.
 4. After the check passes, announce: `✔ <role> report verified`.
+5. Save each report verbatim into the phase's `--agents-file` and record the phase. The orchestrator re-checks the markers; a report that fails step 3 will also fail the record.
 
 ---
 
@@ -77,6 +124,7 @@ Detailed mechanics live in `references/` under this skill's base directory. **At
 
 | File | Read at |
 |------|---------|
+| `references/orchestrator.md` | Phase 0 start (run tracking + gates) |
 | `references/workspace-and-pool.md` | Phase 0 start |
 | `references/discovery.md` | Phase 2 start (covers Phases 2–4) |
 | `references/build.md` | Phase 5 start (covers Phases 5–6b) |
@@ -289,6 +337,15 @@ Both Phase 9 agents read only this file — never `enriched.json`, the working p
 
 **Read `references/challenger-template.md` now.** Spawn the two agents it describes — a Proposer that defends every card with an oracle quote, and a Challenger that attacks the deck independently and runs the full checklist (membership, oracle, restrictions, identity fit, better alternatives, proportional validation, sideboard cohesion, mana re-run, **derivation audit**, **absence audit**, pipeline viability, and **failure-mode review**). Neither agent sees the other's output during generation. Both dispatches and both returned reports follow the subagent protocol in **Phase Protocol** — verify the BEGIN/END markers before adjudicating.
 
+**If either dispatch fails for any reason** — API session limit, credit exhaustion, tool error, a report missing its markers after a re-dispatch — run `python -m cuber.orchestrator fail <run_id> phase_09_grill --error "<what happened>"` and **stop.** Report it to the user. There is no inline substitute for this phase: a mechanical check you run yourself is not a second independent agent, and recording it as one is fabrication. The orchestrator will not accept `--mode inline` here, and `orchestrator export` will refuse to write the deck regardless.
+
+**On success**, record the phase with both verbatim reports:
+```
+python -m cuber.orchestrator record <run_id> phase_09_grill --mode independent \
+    --agents-file  _workspace/<run-token>/grill_agents.json \
+    --payload-file  _workspace/<run-token>/grill_adjudication.json
+```
+
 ### Resolve Grill (you adjudicate)
 
 You built this deck, so you defend it and judge the Challenger's findings. Every finding arrives tagged by the Challenger as **BLOCKING** (the deck cannot finalize while it stands) or **ADVISORY** (yours to decide on the merits). Resolution is a table, a repair, an approval round, and a gate — in that order:
@@ -339,9 +396,29 @@ Ask: **"Save this deck? [y/N]"**
 
 ## Phase 11: Save
 
+**Step 0 — GATE STATUS (mandatory; print before writing ANY file).** Do not compose this table from memory. Run the orchestrator and paste its output verbatim:
+
+```
+python -m cuber.orchestrator resume <run_id>
+```
+
+It prints every phase as `PASS` / `FAILED` / `INVALID` / `pending`, with the reason for anything not `PASS`, read off the artifacts on disk. That is the gate status — your recollection of the run is not evidence, and a phase you *believe* passed but never recorded shows as `pending`, which is the correct answer.
+
+**If the command exits non-zero, STOP. Do not write any file.** Show the user the table, name the incomplete gate(s), and hand it to them — they decide whether to re-run the gate or override. Never hand-write an artifact to turn a row green, and never save "the deck is fine anyway."
+
+`orchestrator export` re-checks the same gates and refuses to write when any of them failed, so a deck with a bad grill cannot be saved whether or not you run this step. Run it anyway — a refusal mid-save is a worse experience than an honest table.
+
 On confirmation, prompt for a deck name if not already provided. Sanitize to a filesystem-safe slug (lowercase, alphanumeric + hyphens).
 
-All four files go into a single subfolder: `cubes/<id>/decks/<name>/`
+All four files go into a single subfolder: `cubes/<id>/decks/<name>/`.
+
+**Do not write them yourself.** Build a manifest and hand it to the orchestrator, which re-checks every gate and performs the write:
+
+```
+python -m cuber.orchestrator export <run_id> --manifest _workspace/<run-token>/manifest.json
+```
+
+`{cube_id, deck_name, files: {"deck.json": {...}, "deck.tsv": "...", "deck.mwDeck": "...", "analysis.md": "..."}}`. It refuses any filename outside those four, and checks the gates before the first byte is written — a refusal leaves no partial deck behind. This is the only sanctioned way to save, and it works in any environment; a hand-written deck file bypasses the gate and is a process violation even when the deck is fine.
 
 File-by-file specs — the `deck.json` schema, `deck.tsv` columns, `exporter.write_mwdeck`, and the `analysis.md` frontmatter and section structure — are in `references/render-and-save.md`.
 
@@ -353,6 +430,18 @@ Saved:
   cubes/<id>/decks/<name>/deck.mwDeck
   cubes/<id>/decks/<name>/analysis.md
 ```
+
+### Post-save — REJECTED & RISKY (mandatory; print after every save)
+
+Printed to the user in chat, after the four paths. Not written to any file. Three parts, always all three, in order. This is a candour report, not a defence of the build — you have already saved; nothing here is a sales pitch.
+
+**1. Five highest-power pool cards NOT in the deck.** Rank by raw card power **within the working pool** (`_workspace/<run-token>/working_pool.json`) restricted to `core_colors` + `splash_colors` — the whole pool, not just the Phase 5A `include_candidates`, and not the Phase 9 absence-audit list. There is no power rating in the data; judge it from `oracle_text` and say so. One sentence of rejection reason each, and the reason must be about THIS deck (wrong axis, unfeedable cost, off-curve, pip demand the mana base cannot serve), not a generic slight. If a card was cut for no reason you can defend, say **"no principled reason"** — that is a legitimate and expected entry, not a failure.
+
+**2. Every general heuristic you applied, with its local justification.** One row per heuristic — land count, curve shape, protection/interaction counts, ramp count, removal density, colour ratios, anything you reached for as a rule of thumb. Each needs the specific card text or the actual math from THIS list that justifies it here (per the Counts Principle: numerator/denominator against the deck you built). A heuristic you cannot ground in this deck's cards is reported as ungrounded — write **"no principled reason — applied as a default"**. Do not construct a post-hoc rationalization to fill the cell; an honest ungrounded row is the point of the section.
+
+**3. What you are genuinely unsure about.** Open questions, judgement calls that could have gone the other way, thin spots you accepted, counts near a threshold, anything the grill resolved by argument rather than by evidence. If you are genuinely unsure of nothing, say so plainly — but check first: a build with zero uncertainty is rarer than it feels.
+
+Never soften an entry to make the deck look better, and never omit a part because it would be short.
 
 ---
 
