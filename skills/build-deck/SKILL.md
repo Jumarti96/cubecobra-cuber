@@ -208,7 +208,7 @@ The considered-but-excluded entries become the `### CARDS CONSIDERED BUT EXCLUDE
 
 Build from the INCLUDE candidates. For each card, its oracle text (from the working pool cache) must support the role you assign; if it does not, the card does not go in.
 
-**Before you classify, run Step 0 — sketch → judge → lock (every build):** sketch 2–3 materially-distinct skeletons, dispatch an independent, pool-blind **shape judge** (subagent protocol above) to pick one, lock it, and carry its `weak_keystones` and rejected-sketch **harvest** into FILL. Breaks a greedy single-commit that varies run-to-run and blind-spots viable shapes. Mechanics in `references/build.md`.
+**Before you classify, run Step 0 — sketch → judge → lock (every build):** pin the `archetype_family` from the locked `thesis.default_role` + Phase 1 intent, assign 2–3 build **lenses**, and dispatch **one independent, pool-blind sketcher subagent per lens, in parallel** (subagent protocol above) — each blind to the others and building only from the `include_candidates` slice. Then an independent, pool-blind **shape judge** picks one **build**; lock it, and carry its `weak_keystones` and rejected-build **harvest** into FILL. The three sketches are builds of ONE archetype, not competing archetypes. Breaks a greedy single-commit that varies run-to-run and blind-spots viable builds. Mechanics in `references/build.md`.
 
 Then follow the numbered steps in `references/build.md`: **0 SKETCH→JUDGE→LOCK → 1 CLASSIFY (lock the selected) → 2 ALLOCATE SLOTS → 3 LAND COUNT → 4 MANA SOURCES → 5 FILL (+ harvest) → 6 COUNT-DEPENDENT VERDICTS → 7 record `build_output`**.
 
