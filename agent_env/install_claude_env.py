@@ -103,7 +103,15 @@ def check_settings() -> None:
     gate_cmds = [h.get("command", "") for entry in pre for h in (entry.get("hooks") or [])
                  if "gate_export.py" in h.get("command", "")]
     if not gate_cmds:
-        bad("no PreToolUse hook invoking agent_env/gate_export.py — export gate is OFF")
+        # NOT a failure. The gate is enforced by `orchestrator export`, which
+        # checks every gate in the same function that writes the deck. The hook
+        # is an optional backstop that catches a deck written by hand instead of
+        # through export. A setup without it is valid — the skill does not
+        # reference it and does not need it.
+        warn("optional export-gate hook not installed (agent_env/gate_export.py). "
+             "The gate still holds: `orchestrator export` is the only sanctioned "
+             "deck writer and re-checks every phase. The hook only adds a backstop "
+             "against a hand-written deck file.")
     else:
         ok(f"export-gate hook wired ({len(gate_cmds)} entry)")
         for cmd in gate_cmds:

@@ -6,9 +6,11 @@ Read at Phase 0 start. Command reference for `cuber/orchestrator.py`, the state 
 
 A **ledger, a gatekeeper, and the deck writer.** It records what each phase did, refuses to continue when a gate did not pass, and performs the export itself.
 
-That last part is what makes the gate real rather than advisory. `orchestrator export` checks every gate and writes the deck files **in the same function**. There is no sanctioned path that writes a deck without passing the gate, so enforcement does not depend on a hook intercepting you — it works in any CLI, any environment, with no harness features at all.
+That last part is what makes the gate real rather than advisory. `orchestrator export` checks every gate and writes the deck files **in the same function**. There is no sanctioned path that writes a deck without passing the gate, so nothing has to intercept you for the gate to hold.
 
 It is **not a driver**. It does not dispatch agents for you (a Python process cannot reach into your harness's agent tool). You still do the phase work; the orchestrator decides whether what you did counts.
+
+Everything here is plain Python with no editor or harness dependency. The skill is fully enforced by these commands alone — under Claude Code, another agent CLI, or a bare terminal.
 
 It **cannot prove** a report came from a real independent agent — `mode` and the reports are self-reported. What it does is make evasion explicit: faking a grill means writing a fabricated report to disk, instead of silently omitting a step.
 
@@ -92,12 +94,6 @@ python -m cuber.orchestrator export <run_id> --manifest _workspace/<tok>/manifes
 ```
 
 Only the four known filenames are accepted; anything else is refused, so the manifest cannot be used to write outside the deck folder. Every gate is checked **before** the first byte is written — a refusal leaves no partial output.
-
-## The export hook (Claude Code only, optional)
-
-`agent_env/gate_export.py` runs as a `PreToolUse` hook on `Write|Edit` and denies (exit 2) a direct write into `cubes/<id>/decks/` that has not passed the gate.
-
-It is a **backstop, not the mechanism** — it catches a deck file written by hand instead of through `export`. Everything still works without it; a non-Claude CLI simply relies on `export` being the only writer. It fails **open** when its own script is missing or the event is malformed: a guard that bricks the workspace when *it* breaks is worse than no guard.
 
 ## Failure semantics
 

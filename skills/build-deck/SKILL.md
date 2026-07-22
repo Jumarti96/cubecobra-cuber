@@ -337,7 +337,7 @@ Both Phase 9 agents read only this file — never `enriched.json`, the working p
 
 **Read `references/challenger-template.md` now.** Spawn the two agents it describes — a Proposer that defends every card with an oracle quote, and a Challenger that attacks the deck independently and runs the full checklist (membership, oracle, restrictions, identity fit, better alternatives, proportional validation, sideboard cohesion, mana re-run, **derivation audit**, **absence audit**, pipeline viability, and **failure-mode review**). Neither agent sees the other's output during generation. Both dispatches and both returned reports follow the subagent protocol in **Phase Protocol** — verify the BEGIN/END markers before adjudicating.
 
-**If either dispatch fails for any reason** — API session limit, credit exhaustion, tool error, a report missing its markers after a re-dispatch — run `python -m cuber.orchestrator fail <run_id> phase_09_grill --error "<what happened>"` and **stop.** Report it to the user. There is no inline substitute for this phase: a mechanical check you run yourself is not a second independent agent, and recording it as one is fabrication. The orchestrator will not accept `--mode inline` here and the export hook will block the save regardless.
+**If either dispatch fails for any reason** — API session limit, credit exhaustion, tool error, a report missing its markers after a re-dispatch — run `python -m cuber.orchestrator fail <run_id> phase_09_grill --error "<what happened>"` and **stop.** Report it to the user. There is no inline substitute for this phase: a mechanical check you run yourself is not a second independent agent, and recording it as one is fabrication. The orchestrator will not accept `--mode inline` here, and `orchestrator export` will refuse to write the deck regardless.
 
 **On success**, record the phase with both verbatim reports:
 ```
@@ -406,7 +406,7 @@ It prints every phase as `PASS` / `FAILED` / `INVALID` / `pending`, with the rea
 
 **If the command exits non-zero, STOP. Do not write any file.** Show the user the table, name the incomplete gate(s), and hand it to them — they decide whether to re-run the gate or override. Never hand-write an artifact to turn a row green, and never save "the deck is fine anyway."
 
-The export attempt is independently blocked by the PreToolUse hook (`agent_env/gate_export.py`), so a deck write with a bad grill fails whether or not you run this step. Run it anyway — a blocked write mid-save is a worse experience than an honest table.
+`orchestrator export` re-checks the same gates and refuses to write when any of them failed, so a deck with a bad grill cannot be saved whether or not you run this step. Run it anyway — a refusal mid-save is a worse experience than an honest table.
 
 On confirmation, prompt for a deck name if not already provided. Sanitize to a filesystem-safe slug (lowercase, alphanumeric + hyphens).
 
