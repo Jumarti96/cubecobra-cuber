@@ -339,6 +339,22 @@ Ask: **"Save this deck? [y/N]"**
 
 ## Phase 11: Save
 
+**Step 0 — GATE STATUS (mandatory; print before writing ANY file).** No deck file is written until this table has been printed. Emit one row per phase 0–9, in order, with a verdict of `PASS` / `FAIL` / `SKIPPED` and, for every row that is not `PASS`, a one-line reason:
+
+```
+GATE STATUS
+| Phase | Name | Status | Reason (if not PASS) |
+|---|---|---|---|
+| 0 | Card Pool Definition | PASS | |
+| 1 | Interview | PASS | |
+...
+| 9 | Self-Grill | SKIPPED | Challenger dispatch failed — API limit |
+```
+
+Derive each verdict from what actually happened in THIS run — the phase banner appeared and the phase's work completed (`PASS`), the phase ran and its gate failed (`FAIL`), or the phase never ran, was bypassed, or its work was substituted inline (`SKIPPED`). A phase whose banner never appeared is `SKIPPED`. Do not mark a phase `PASS` from memory of how the pipeline is supposed to go; if you cannot point to the evidence, it is not a `PASS`.
+
+**If any row is `SKIPPED`: STOP. Do not write any file.** Print the table, name the skipped gate(s) and why, and hand it to the user — they decide whether to re-run the gate or override. A `FAIL` row is likewise not savable on your own authority: Phase 9's finalization gate governs, and reaching Phase 11 with a `FAIL` means something went wrong upstream — surface it rather than saving. Never silently downgrade a `SKIPPED` to `PASS`, and never save "the deck is fine anyway."
+
 On confirmation, prompt for a deck name if not already provided. Sanitize to a filesystem-safe slug (lowercase, alphanumeric + hyphens).
 
 All four files go into a single subfolder: `cubes/<id>/decks/<name>/`

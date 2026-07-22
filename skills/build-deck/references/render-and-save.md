@@ -100,6 +100,8 @@ Any mismatch is a **hard failure**: regenerate `analysis.md` from the deck array
 
 Four files, all into `cubes/<id>/decks/<name>/`.
 
+**Gate first.** Nothing below runs until the Phase 11 Step 0 **GATE STATUS** table (SKILL.md) has been printed and no phase is `SKIPPED`. A skipped gate stops the save and goes to the user.
+
 **Write deck.json** using the Write tool to `cubes/<id>/decks/<name>/deck.json`:
 ```json
 {
