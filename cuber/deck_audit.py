@@ -132,16 +132,17 @@ def karsten_adjustment(ramp_count: int, deck_size: int) -> int:
 # keepable hand; past 4 the extra land is a blank.
 BASE_WINDOW = (2, 4)
 
-# Applied to the scaled adjustment. Captures what avg MV does NOT already say:
-# control must hit every land drop and converts excess mana into cards; aggro and
-# combo stop needing lands once they reach their operating count. Do not re-encode
-# deck speed here — the avg-MV term already carries it.
+# Applied to the scaled adjustment. Deliberately neutral for every archetype: avg
+# MV is meant to do the work here, so the archetype no longer shifts the land count
+# on its own. The keys are retained so macro_archetype still validates and the trace
+# still reports which archetype was seen — the delta is simply 0 across the board.
+# (Re-encoding deck speed here double-counts what the avg-MV term already carries.)
 ARCHETYPE_LAND_DELTA = {
-    "aggro": -1.5,
-    "tempo": -1.0,
-    "combo": -1.0,
+    "aggro": 0.0,
+    "tempo": 0.0,
+    "combo": 0.0,
     "midrange": 0.0,
-    "control": 1.0,
+    "control": 0.0,
 }
 
 # The curve the base implicitly assumes; the adjustment reads avg MV as a deviation
