@@ -115,41 +115,21 @@ def karsten_adjustment(ramp_count: int, deck_size: int) -> int:
 # not scale-invariant. Solving the opening-hand problem per deck size gives 17/40
 # (42.5%) but 25/60 (41.7%) — neither is the 40% the old baseline assumed.
 #
-# Two things are load-bearing about this shape:
-#
-# 1. The BASE carries the deck-size effect and has no free parameters. An earlier
-#    draft made the curve term absolute (`N/3 + 2*avg_mv`), but an absolute card
-#    count contributes the same ~5.6 lands to a 40-card and a 60-card deck, which
-#    is a far bigger share of the smaller one. Everything that is not the base is
-#    therefore scaled by N/60.
-#
-# 2. Archetype lives ONLY in the delta, never in the base window. Using a narrower
-#    (2,3) window for fast decks AND subtracting for their low curve double-counts
-#    the same fact — aggro is fast *because* it is low-curve — and produced 12-14
-#    land recommendations for 40-card aggro.
+# The load-bearing property of this shape: the BASE carries the deck-size effect and
+# has no free parameters. An earlier draft made the curve term absolute
+# (`N/3 + 2*avg_mv`), but an absolute card count contributes the same ~5.6 lands to a
+# 40-card and a 60-card deck, which is a far bigger share of the smaller one.
+# Everything that is not the base is therefore scaled by N/60. The land count is a
+# function of deck size, curve and acceleration only — there is no per-archetype term;
+# average mana value already carries how fast or slow a deck plays.
 
 # The opening-hand land window the base solves for. 2 lands is the floor for a
 # keepable hand; past 4 the extra land is a blank.
 BASE_WINDOW = (2, 4)
 
-# Applied to the scaled adjustment. Deliberately neutral for every archetype: avg
-# MV is meant to do the work here, so the archetype no longer shifts the land count
-# on its own. The keys are retained so macro_archetype still validates and the trace
-# still reports which archetype was seen — the delta is simply 0 across the board.
-# (Re-encoding deck speed here double-counts what the avg-MV term already carries.)
-ARCHETYPE_LAND_DELTA = {
-    "aggro": 0.0,
-    "tempo": 0.0,
-    "combo": 0.0,
-    "midrange": 0.0,
-    "control": 0.0,
-}
-
 # The curve the base implicitly assumes; the adjustment reads avg MV as a deviation
 # from this, so a deck on this exact curve gets no curve adjustment at all.
 REFERENCE_AVG_MV = 2.5
-
-DEFAULT_ARCHETYPE = "midrange"
 
 # Guardrail only, for extreme inputs (a deck whose projected curve is far outside
 # anything playable). The clamp is FLAGGED in the trace rather than applied
@@ -211,40 +191,26 @@ def hypergeometric_base(deck_size: int, window: Optional[tuple] = None) -> int:
     )
 
 
-def land_adjustment(
-    deck_size: int, avg_mv: float, accel: int, archetype: str
-) -> float:
-    """Curve + acceleration + archetype shift, scaled to deck size.
+def land_adjustment(deck_size: int, avg_mv: float, accel: int) -> float:
+    """Curve + acceleration shift, scaled to deck size.
 
     Scaled by N/60 because these are all *proportional* effects: a curve one point
     above reference should move a 40-card deck by two thirds of what it moves a
     60-card deck, not by the same absolute number of cards.
     """
-    raw = (
-        2 * (avg_mv - REFERENCE_AVG_MV)
-        - 0.25 * accel
-        + ARCHETYPE_LAND_DELTA[archetype]
-    )
+    raw = 2 * (avg_mv - REFERENCE_AVG_MV) - 0.25 * accel
     return raw * (deck_size / 60)
 
 
-def land_target(
-    deck_size: int,
-    avg_mv: float,
-    accel: int,
-    macro_archetype: Optional[str] = None,
-) -> Dict[str, Any]:
+def land_target(deck_size: int, avg_mv: float, accel: int) -> Dict[str, Any]:
     """Recommended land count, with the full derivation trace.
 
     The returned dict IS the record the deck builder stores as `land_math.target`;
-    nothing downstream should re-derive or hand-copy these numbers.
+    nothing downstream should re-derive or hand-copy these numbers. The count is a
+    function of deck size, curve and acceleration only — there is no archetype term.
     """
-    archetype = (macro_archetype or "").strip().lower()
-    if archetype not in ARCHETYPE_LAND_DELTA:
-        archetype = DEFAULT_ARCHETYPE
-
     base = hypergeometric_base(deck_size)
-    adjustment = land_adjustment(deck_size, avg_mv, accel, archetype)
+    adjustment = land_adjustment(deck_size, avg_mv, accel)
     raw_target = base + adjustment
 
     lo_bound = math.ceil(LAND_FRACTION_CLAMP[0] * deck_size)
@@ -259,8 +225,6 @@ def land_target(
         "base_lands": base,
         "base_window": BASE_WINDOW,
         "base_p_window": round(hypergeom_window(deck_size, base, *BASE_WINDOW), 4),
-        "archetype": archetype,
-        "delta": ARCHETYPE_LAND_DELTA[archetype],
         "avg_mv": avg_mv,
         "reference_avg_mv": REFERENCE_AVG_MV,
         "accel": accel,
@@ -364,15 +328,12 @@ def mana_audit(
     commander_cards: Optional[List[Dict[str, Any]]] = None,
     core_colors: Optional[List[str]] = None,
     splash_colors: Optional[List[str]] = None,
-    macro_archetype: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run full mana audit and return structured result dict.
 
     format: one of "40-card", "60-card", "commander-60", "commander-100"
     core_colors: primary deck colors (subset of all card color identities)
     splash_colors: off-color splash colors (≤ 3 cards each)
-    macro_archetype: drives the land-target archetype delta and opening-hand
-        window (constructed formats only); unknown/None falls back to midrange.
     """
     lands = [c for c in deck_cards if "land" in (c.get("type_line") or "").lower()]
     non_lands = [c for c in deck_cards if "land" not in (c.get("type_line") or "").lower()]
@@ -396,7 +357,7 @@ def mana_audit(
         rec_karsten = karsten_adjustment(len(ramp), deck_size)
         recommended_land_count = round((rec_burgess + rec_karsten) / 2)
     else:
-        land_target_trace = land_target(deck_size, avg_cmc, accel, macro_archetype)
+        land_target_trace = land_target(deck_size, avg_cmc, accel)
         recommended_land_count = land_target_trace["recommended_land_count"]
 
     land_diff = abs(land_count - recommended_land_count)
@@ -479,8 +440,7 @@ def format_audit_report(audit: Dict[str, Any]) -> str:
             f" (argmax P({lo}-{hi} in 7) = {trace['base_p_window']:.3f})"
             f"  {trace['adjustment']:+.2f} adj"
             f" [MV {trace['avg_mv']} vs {trace['reference_avg_mv']},"
-            f" {trace['accel']} accel, {trace['archetype']} {trace['delta']:+.1f},"
-            f" scaled N/60]"
+            f" {trace['accel']} accel, scaled N/60]"
             f"  ->  {trace['recommended_land_count']} lands"
             f"  (P({lo}-{hi} in 7) = {trace['p_window_at_recommended']:.3f})"
             + ("  [CLAMPED]" if trace["clamped"] else "")

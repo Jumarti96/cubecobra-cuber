@@ -76,13 +76,17 @@ The land count is a computed value, not a percentage read off a table:
 
 ```
 base(N) = the land count maximizing P(2–4 lands in an opening hand of 7)   → 17 at N=40, 25 at N=60
-target  = base(N) + [ 2·(avg MV − 2.5) − 0.25·(cantrips + ramp) + archetype delta ] · (N/60)
+target  = base(N) + [ 2·(avg MV − 2.5) − 0.25·(cantrips + ramp) ] · (N/60)
 ```
+
+The land count is a function of deck size, curve and acceleration only — there is **no
+per-archetype term**. Average mana value already carries how fast or slow a deck plays, so a
+control deck lands more only because its curve is higher, not because of a seat bonus.
 
 The opening hand is a fixed 7 cards at every deck size, so the land *fraction* that produces a
 good opener is not scale-invariant and a percentage carried over from 60-card constructed is
 wrong at 40 cards. Solving the opening hand per deck size is what makes the base correct; the
-curve, acceleration and archetype terms then shape the count around it.
+curve and acceleration terms then shape the count around it.
 
 Write a temp script in the run dir and print the returned dict:
 
@@ -92,7 +96,6 @@ trace = deck_audit.land_target(
     deck_size,            # N (excluding the commander)
     projected_avg_mv,     # avg MV of NONLAND cards, from step 1
     accel,                # cantrips + ramp, counted ONCE each — deck_audit.accel_count(non_lands)
-    macro_archetype,      # the family fixed in Step 0
 )
 print(trace)
 ```
