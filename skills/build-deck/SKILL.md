@@ -222,10 +222,10 @@ Write `_workspace/<run-token>/_tmp_validate_build.py` and run the light checks i
 
 Convert the mainboard into card dicts (join `name` against the working pool cache).
 
-Run `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors, macro_archetype=macro_archetype)`.
+Run `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)`.
 Display the report using `deck_audit.format_audit_report(audit)`.
 
-Pass `macro_archetype` — it selects the land-target archetype delta and opening-hand window. Omitting it silently audits every deck as midrange.
+The land count is a function of deck size, curve and acceleration only — there is no archetype term, so the mana audit takes no `macro_archetype`. (You still compute `macro_archetype` for the Phase 6b structural curve check, which does use it.)
 
 **If audit result is FAIL:**
 - Adjust land count toward the recommended target. The audit and Phase 5B step 3 call the *same* `land_target` function, so a land-count FAIL means the list drifted from the target you built to — usually because the actual avg MV moved during FILL. Fix the count, not the recommendation; `audit["land_target_trace"]` shows the derivation.
