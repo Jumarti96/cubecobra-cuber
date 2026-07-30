@@ -152,7 +152,7 @@ Write `_workspace/<run-token>/_tmp_validate_build.py` and run these before the g
 1. Mainboard count (summing `qty`) == `deck_size` (+ commander). Sideboard == `sideboard_size`.
 2. Every `name` exists by **exact string match** in the working pool cache (synthesized basics count — they are in the cache).
 3. Copy counts obey `card_pool_rules` — cross-check with `cube_search.get_max_copies`. **Basic lands are exempt**: unlimited copies unless the user explicitly restricted them.
-4. Every nonland `color_identity` ⊆ `core_colors` ∪ `splash_colors` (or the commander's identity).
+4. Every nonland card is **usable** in `core_colors` ∪ `splash_colors` (or the commander's identity) — test it with `effective_cost.best_mode(card, core_colors, splash_colors)` returning non-`None`, **not** by hand-checking raw `color_identity`. A card whose printed identity is off-colour but which has a colourless/in-colour replacement mode (e.g. Street Wraith's cycling, a kicker card cast in its base colour) is legal; `best_mode` returns the matched mode, and `search_pool` already stamped it with `usable_as`. Re-deriving the raw-identity subset here would contradict the pool gate and wrongly reject those cards — call the same helper. Record each off-identity inclusion's `usable_as` so Phase 9 knows it is in for that mode only.
 5. ≤ 3 cards for each splash color, and every splashed card is in `splash_candidates`.
 
 Fix any failure directly (you built the deck; you repair it), then re-run until all pass. Do not proceed to Phase 6 with a failing check, and never hand-patch a validator to make it agree.

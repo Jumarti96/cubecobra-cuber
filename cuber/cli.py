@@ -228,6 +228,10 @@ def tag(
         raise typer.Exit(1)
 
     cube = tagger.tag_cards(cube, overwrite=overwrite)
+    # Deterministically complete the mechanical_functions pillar for keyword
+    # mechanics, always applied (even if the LLM step above was declined) so
+    # keyword-bearers like cyclers are reliably tagged.
+    cube = tagger.apply_keyword_functions(cube)
     save_enriched(cube, id_or_slug)
 
     updated = backfill_tags_to_mainboard(cube, id_or_slug)

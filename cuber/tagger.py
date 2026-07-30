@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from . import llm
 from .cube import Card, Cube
+from .effective_cost import keyword_mechanics
 
 # ── Taxonomy Vocabulary ───────────────────────────────────────────────────────
 
@@ -482,7 +483,7 @@ def tag_cards(cube: Cube, overwrite: bool = False) -> Cube:
         print(f"  Batch {i}/{len(batches)} ({len(batch)} cards)...")
         messages = build_tagging_prompt(batch)
         try:
-            response = llm.chat(messages, temperature=0.1)
+            response = llm.chat(messages)
             batch_profiles = _parse_response(response, batch)
             all_profiles.update(batch_profiles)
         except llm.LLMError as e:
@@ -499,4 +500,44 @@ def tag_cards(cube: Cube, overwrite: bool = False) -> Cube:
             tagged += 1
 
     print(f"  Tagged {tagged} cards.")
+    return cube
+
+
+def apply_keyword_functions(cube: Cube) -> Cube:
+    """Deterministically complete the ``mechanical_functions`` pillar for keywords.
+
+    The LLM already lists a keyword ability (Cycling, Madness, ...) as a
+    ``mechanical_function``, but only catches some cards. Keywords are
+    mechanically exact, so this rule-based pass fills the gaps for the rest --
+    adding nothing the LLM's own convention wouldn't, so it needs no prompt or
+    vocabulary change. Runs as part of ``cuber tag`` after the LLM pass, so it
+    fires on every tag run, survives ``--overwrite`` (the LLM profile is written
+    first, these are re-added last), and -- being free of any API call -- can
+    backfill an already-tagged cube on its own.
+
+    Idempotent: unions into ``mechanical_functions`` and dedupes, preserving the
+    LLM's values and their order. A card with no ``taxonomic_profile`` yet still
+    gets one carrying just its keyword functions, so ``Card.tags`` (and therefore
+    ``search --tag``) see it immediately.
+    """
+    tagged = 0
+    for card in cube.cards:
+        if (card.board or "mainboard") != "mainboard":
+            continue
+        functions = keyword_mechanics({
+            "oracle_text": card.oracle_text,
+            "type_line": card.type_line,
+        })
+        if not functions:
+            continue
+        profile = card.taxonomic_profile
+        if profile is None:
+            profile = {}
+            card.taxonomic_profile = profile
+        existing = list(profile.get("mechanical_functions") or [])
+        added = [f for f in sorted(functions) if f not in existing]
+        if added:
+            profile["mechanical_functions"] = existing + added
+            tagged += 1
+    print(f"  Keyword pass: completed mechanical_functions on {tagged} card(s).")
     return cube

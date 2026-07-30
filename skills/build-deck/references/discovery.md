@@ -134,7 +134,7 @@ Ask whether to lower the viability threshold or change pool rules (restart Phase
 After locking the pipeline, scan the full pool for off-color cards whose `taxonomic_profile.synergy_clusters` overlap with the selected pipeline's clusters and whose `taxonomic_profile.structural_roles` include `"Payload/Payoff"` or `"Engine/Outlet"`. These are splash candidates — high-value cards that directly support the strategy but fall outside the core color identity.
 
 For each candidate, check whether it qualifies as a splash:
-- Its `color_identity` contains exactly 1 color not in `core_colors`
+- Its **effective** requirement contains exactly 1 color not in `core_colors` — test with `effective_cost.best_mode(card, core_colors, [off_color])` and read the matched mode's `cost_pips`, not raw `color_identity`. A card whose off-colour identity is only reachable through a mode you would not use (e.g. Street Wraith reads as black but is played as a colourless cycler) is **not a splash at all** — `best_mode(card, core_colors, [])` already returns non-`None`, so it belongs in the core pool, not the splash list.
 - No more than 3 cards of that off-color are being considered
 
 If qualified candidates exist, set `splash_colors` to the list of off-color letters (e.g., `["R"]`) **and record the qualifying card names as `splash_candidates`** — a bounded list, at most 3 names per splash color. Otherwise set `splash_colors = []` and `splash_candidates = []`.

@@ -7,6 +7,8 @@ import re
 from collections import Counter
 from typing import Any, Dict, List, Optional
 
+from .effective_cost import best_mode
+
 
 _PIP_RE = re.compile(r"\{([WUBRG])\}")
 _ADD_SINGLE_RE = re.compile(r"Add \{([WUBRG])\}", re.IGNORECASE)
@@ -343,7 +345,20 @@ def mana_audit(
     deck_size = len(deck_cards)
     land_count = len(lands)
 
-    cmc_vals = [float(c.get("cmc") or 0) for c in non_lands]
+    core_colors = core_colors or []
+    splash_colors = splash_colors or []
+
+    def _effective(card: Dict[str, Any]):
+        """The pips (with multiplicity) and mana value the deck actually pays for
+        this card, using the mode it is played by. A colorless cycler like Street
+        Wraith contributes no colored pips and ~0 mana value instead of the
+        phantom ``{B}{B}`` / cmc 5 of its unused printed cast."""
+        m = best_mode(card, core_colors, splash_colors)
+        if m is None:  # unusable even with splash -- fall back to the printed cost
+            return _PIP_RE.findall(card.get("mana_cost") or ""), float(card.get("cmc") or 0)
+        return list(m["pips"]), float(m["cmc"])
+
+    cmc_vals = [_effective(c)[1] for c in non_lands]
     avg_cmc = round(sum(cmc_vals) / len(cmc_vals), 2) if cmc_vals else 0.0
 
     land_target_trace = None
@@ -368,14 +383,37 @@ def mana_audit(
     else:
         land_count_status = "FAIL"
 
-    # Core color balance
-    core_colors = core_colors or []
-    splash_colors = splash_colors or []
+    # Core color balance. Classify by the mode a card is actually played by, not
+    # its printed identity: a card whose usable mode needs a splash colour is a
+    # real splash card, while one usable within the core (including a colorless
+    # cycler that happens to have an off-colour printed identity) is a core card.
+    core_set = set(core_colors)
+    core_cards = []
+    splash_cards = []
+    for c in deck_cards:
+        m = best_mode(c, core_colors, splash_colors)
+        if m is None:
+            # Unusable even with splash: preserve the old identity-based bucket.
+            if set(c.get("color_identity") or []).issubset(core_set):
+                core_cards.append(c)
+            else:
+                splash_cards.append(c)
+            continue
+        if set(m["cost_pips"]) - core_set:
+            splash_cards.append(c)   # the mode we'd play needs a splash colour
+        else:
+            core_cards.append(c)
 
-    core_cards = [c for c in deck_cards if set(c.get("color_identity") or []).issubset(set(core_colors))]
-    splash_cards = [c for c in deck_cards if not set(c.get("color_identity") or []).issubset(set(core_colors))]
-
-    core_pips = pip_demand(core_cards)
+    # Core pip demand from each core card's *effective* pips (multiplicity kept),
+    # restricted to core colours. A colorless cycler adds nothing here.
+    core_pips_counter: Counter = Counter()
+    for c in core_cards:
+        if "land" in (c.get("type_line") or "").lower():
+            continue
+        for pip in _effective(c)[0]:
+            if pip in core_set:
+                core_pips_counter[pip] += 1
+    core_pips = dict(core_pips_counter)
     all_land_prod = land_color_production(lands)
     core_lands_prod = {k: v for k, v in all_land_prod.items() if k in core_colors}
     core_balance = color_balance(core_pips, core_lands_prod, land_count)

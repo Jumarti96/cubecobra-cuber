@@ -9,6 +9,7 @@ from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from .cube import find_cube_dir, load_enriched
+from .effective_cost import best_mode
 
 
 # ── Pool loaders ────────────────────────────────────────────────────────────
@@ -333,16 +334,24 @@ def search_pool(
         if (card.get("board") or "mainboard") != board:
             continue
         if color_identity is not None:
-            ci = set(card.get("color_identity") or [])
+            # Eligibility is decided by the card's *usable* modes, not its printed
+            # color_identity: a card playable via a colorless/in-color replacement
+            # mode (e.g. Street Wraith's cycling) is legal even when its identity
+            # is off-colour, and a kicker card is legal in its base colour. See
+            # effective_cost.best_mode.
             core_colors = set(color_identity)
-            in_core = ci.issubset(core_colors)
-            if not in_core and splash_color_identity is not None:
-                # Check splash eligibility
+            core_match = best_mode(card, core_colors, set())
+            if core_match is not None:
+                matched = core_match
+            elif splash_color_identity is not None:
+                # Off-core, but maybe splashable. Test the effective requirement
+                # of the mode we'd actually use, then apply the splash heuristic
+                # to that mode's off-colour footprint.
                 allowed = set(splash_color_identity)
-                all_allowed = core_colors | allowed
-                if not ci.issubset(all_allowed):
+                splash_match = best_mode(card, core_colors, allowed)
+                if splash_match is None:
                     continue
-                off_color = ci - core_colors
+                off_color = set(splash_match["cost_pips"]) - core_colors
                 if len(off_color) != 1:
                     continue
                 # Splash criteria: ≤ 2 off-color pips OR CMC ≥ 4 OR kicker
@@ -353,8 +362,14 @@ def search_pool(
                 has_kicker = "kicker" in [t.lower() for t in (card.get("tags") or [])]
                 if not (off_pips <= 2 or cmc >= 4 or has_kicker):
                     continue
-            elif not in_core:
+                matched = splash_match
+            else:
                 continue
+            # Stamp usable_as on a COPY: the pool dict is shared, and mutating it
+            # in place would leave a stale tag when the same pool is searched again
+            # for a different colour combination.
+            card = dict(card)
+            card["usable_as"] = matched.get("usable_as")
         if oracle_pattern is not None:
             oracle = card.get("oracle_text") or ""
             if not re.search(oracle_pattern, oracle, re.IGNORECASE):
