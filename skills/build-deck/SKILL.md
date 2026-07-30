@@ -214,7 +214,7 @@ Then follow the numbered steps in `references/build.md`: **0 SKETCH→JUDGE→LO
 
 ### Phase 5C — Pre-flight Validation (deterministic)
 
-Write `_workspace/<run-token>/_tmp_validate_build.py` and run the light checks in `references/build.md` (deck size, exact-name membership, copy limits, colour identity, splash cap). Every check is a string or number comparison. Fix any failure directly, then re-run until all pass. Do not proceed with a failing check.
+Write `_workspace/<run-token>/_tmp_validate_build.py` and run the light checks in `references/build.md` (deck size, exact-name membership, copy limits, colour usability, splash cap). Every check is a string or number comparison. The colour check tests **usability via `effective_cost.best_mode`**, not raw `color_identity`, so a card played by a colourless/in-colour mode (e.g. a cycler) is not falsely rejected — see build.md check 4. Fix any failure directly, then re-run until all pass. Do not proceed with a failing check.
 
 ---
 
@@ -367,7 +367,7 @@ Saved:
 | **Mana infrastructure, fixing score** | `dossier.mana_infrastructure.duals_by_pair` — use the `free` count. Verify named lands against oracle before trusting it |
 | **Rituals, sweepers, sac outlets, tutors** | `dossier.structural_census` — but a 0-match proves nothing: see `census_caveat` |
 | **What the sideboard answers** | `dossier.threat_profile` + the rest of the cube |
-| Filter by color/type/tag/CMC | `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` |
+| Filter by color/type/tag/CMC | `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` — admits a card if `effective_cost.best_mode` finds a usable mode (a colourless/in-colour cycler or kicker-decline counts, even off printed identity); each returned card carries `usable_as` (`None` = normal cast, else the mode, e.g. `"cycler"`). Returned dicts are copies — the tag never mutates the pool cache |
 | Query Payoff candidates | Filter working pool cache by `taxonomic_profile.structural_roles` containing `"Payload/Payoff"` |
 | Query synergy support | Filter working pool cache by `taxonomic_profile.synergy_clusters` overlap + `"Enabler/Fodder"` or `"Engine/Outlet"` in `structural_roles` |
 | **Card resource profile (mana/card economy)** | `taxonomic_profile.resource_exchange` from the working pool — `Mana:`/`Cards:`/`Board:`/`Life:` labels, empty = neutral. Key absent (untagged cube) → derive from oracle text |

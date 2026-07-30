@@ -7,7 +7,7 @@ No other file may import `openai` or any provider SDK directly.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -34,18 +34,23 @@ def _client() -> OpenAI:
     )
 
 
-def chat(messages: List[Dict[str, str]], temperature: float = 0.2) -> str:
-    """Send a chat-format request. Returns the assistant's response text."""
+def chat(messages: List[Dict[str, str]], temperature: Optional[float] = None) -> str:
+    """Send a chat-format request. Returns the assistant's response text.
+
+    ``temperature`` is sent only when explicitly provided. Newer Anthropic models
+    (Sonnet 5, the Opus 4.7/4.8 family) reject any non-default ``temperature`` with
+    a 400 ("temperature is deprecated for this model"), so the default omits it and
+    lets the model use its own sampling.
+    """
     model = os.environ.get("LLM_MODEL", "")
     if not model:
         raise EnvironmentError("LLM_MODEL is not set.")
     try:
         client = _client()
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,  # type: ignore[arg-type]
-            temperature=temperature,
-        )
+        params: Dict[str, Any] = {"model": model, "messages": messages}
+        if temperature is not None:
+            params["temperature"] = temperature
+        response = client.chat.completions.create(**params)  # type: ignore[arg-type]
         return response.choices[0].message.content or ""
     except EnvironmentError:
         raise
