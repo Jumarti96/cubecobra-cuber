@@ -29,6 +29,7 @@ file, and Windows file symlinks need admin. Convert a flat skill to the director
 layout if you want it linked.
 """
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -37,6 +38,23 @@ from pathlib import Path
 root = Path(__file__).resolve().parent.parent
 src_dir = root / "skills"
 dst_dir = root / ".claude" / "skills"
+
+# How each directory skill was last installed, so a plain run preserves the choice
+# instead of silently reverting a link to a copy. Machine-local: .claude/skills/ is
+# gitignored, and the mode is a property of this checkout, not of the repo.
+MODE_FILE = dst_dir / ".install-mode.json"
+
+
+def load_modes() -> dict:
+    try:
+        return json.loads(MODE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_modes(modes: dict) -> None:
+    MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MODE_FILE.write_text(json.dumps(modes, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def is_link(p: Path) -> bool:
@@ -110,8 +128,11 @@ def _tree_differs(a: Path, b: Path) -> bool:
 
 ap = argparse.ArgumentParser(description=__doc__,
                              formatter_class=argparse.RawDescriptionHelpFormatter)
-ap.add_argument("--link", action="store_true",
-                help="install directory skills as junctions/symlinks instead of copies")
+mode_group = ap.add_mutually_exclusive_group()
+mode_group.add_argument("--link", action="store_true",
+                        help="install directory skills as junctions/symlinks and remember it")
+mode_group.add_argument("--copy", action="store_true",
+                        help="install directory skills as copies and remember it")
 ap.add_argument("--status", action="store_true",
                 help="report how each skill is currently installed and exit")
 args = ap.parse_args()
@@ -129,12 +150,16 @@ if collisions:
     print("Remove one of the two layouts for each name, then re-run.")
     raise SystemExit(1)
 
+modes = load_modes()
+
 if args.status:
     print("skill                          layout     state")
     for name, skill_file in sorted(flat.items()):
         print(f"  {name:28s} flat       {describe(dst_dir / name, skill_file)}")
     for name, folder in sorted(dirs.items()):
-        print(f"  {name:28s} directory  {describe(dst_dir / name, folder)}")
+        remembered = modes.get(name, "copy")
+        print(f"  {name:28s} directory  {describe(dst_dir / name, folder)}"
+              f"   [remembered: {remembered}]")
     raise SystemExit(0)
 
 installed = 0
@@ -149,9 +174,20 @@ for skill_name, skill_file in sorted(flat.items()):
 
 for skill_name, skill_folder in sorted(dirs.items()):
     dst_folder = dst_dir / skill_name
+    # A plain run preserves however this skill was last installed. Without that,
+    # `install_skills.py` silently reverts a link to a copy and the drift the link
+    # was meant to prevent comes straight back.
     if args.link:
+        want = "link"
+    elif args.copy:
+        want = "copy"
+    else:
+        want = modes.get(skill_name, "copy")
+
+    if want == "link":
         if is_link(dst_folder) and Path(os.path.realpath(dst_folder)) == skill_folder.resolve():
             print(f"  {skill_name + '/':30s} -> .claude/skills/{skill_name}/  (already linked)")
+            modes[skill_name] = "link"
             installed += 1
             continue
         remove_dst(dst_folder)
@@ -163,9 +199,13 @@ for skill_name, skill_folder in sorted(dirs.items()):
         shutil.copytree(skill_folder, dst_folder)
         n_files = sum(1 for p in dst_folder.rglob("*") if p.is_file())
         print(f"  {skill_name + '/':30s} -> .claude/skills/{skill_name}/ ({n_files} files, copied)")
+    modes[skill_name] = want
     installed += 1
 
-mode = "linked" if args.link else "installed"
-print(f"\n{installed} skill(s) {mode}. Restart Claude Code to pick up changes.")
-if args.link:
-    print("Linked skills edit in place: .claude/skills/<name>/ IS skills/<name>/.")
+save_modes(modes)
+
+linked_now = sorted(n for n, m in modes.items() if m == "link" and n in dirs)
+print(f"\n{installed} skill(s) installed. Restart Claude Code to pick up changes.")
+if linked_now:
+    print(f"Linked (edit in place, .claude/skills/<name>/ IS skills/<name>/): {', '.join(linked_now)}")
+    print("Plain runs preserve this. Use --copy to go back to copies.")
