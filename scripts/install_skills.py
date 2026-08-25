@@ -80,6 +80,8 @@ def make_link(src: Path, dst: Path) -> None:
 
 
 def describe(dst: Path, src: Path) -> str:
+    """Report how `dst` is installed. `src` is skills/<name>.md for a flat skill
+    or skills/<name>/ for a directory skill — the two compare differently."""
     if not dst.exists() and not is_link(dst):
         return "missing"
     if is_link(dst):
@@ -88,7 +90,13 @@ def describe(dst: Path, src: Path) -> str:
         except OSError:
             return "link (unresolvable)"
         return "linked" if target == src.resolve() else f"linked -> {target} (WRONG TARGET)"
-    same = not _tree_differs(src, dst)
+    if src.is_file():
+        installed = dst / "SKILL.md"
+        if not installed.is_file():
+            return "copied (STALE — SKILL.md missing)"
+        same = installed.read_bytes() == src.read_bytes()
+    else:
+        same = not _tree_differs(src, dst)
     return "copied (in sync)" if same else "copied (STALE — re-run install)"
 
 
@@ -123,8 +131,8 @@ if collisions:
 
 if args.status:
     print("skill                          layout     state")
-    for name in sorted(flat):
-        print(f"  {name:28s} flat       {describe(dst_dir / name, src_dir / name)}")
+    for name, skill_file in sorted(flat.items()):
+        print(f"  {name:28s} flat       {describe(dst_dir / name, skill_file)}")
     for name, folder in sorted(dirs.items()):
         print(f"  {name:28s} directory  {describe(dst_dir / name, folder)}")
     raise SystemExit(0)
