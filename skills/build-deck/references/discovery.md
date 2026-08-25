@@ -73,26 +73,51 @@ Query the filtered pool for cards where `taxonomic_profile.structural_roles` con
 
 If no cards have `"Payload/Payoff"`, fall back to cards with `"Standalone Threat"` as implicit payoffs and note this in the output.
 
-**Validate each Payoff against its synergy cluster support.**
+**Build each Payoff's cluster roster — every role, no filter.**
 
 For each Payoff candidate:
+
 1. Read its `taxonomic_profile.synergy_clusters`.
-2. Count all cards in the pool whose `taxonomic_profile.synergy_clusters` overlap with the Payoff's clusters AND whose `taxonomic_profile.structural_roles` include `"Enabler/Fodder"` or `"Engine/Outlet"`.
-3. Viability threshold: `round(N × 0.05)` supporting cards, where N is the target deck size.
-4. If supporting card count ≥ threshold → pipeline is **viable**.
-5. If supporting card count < threshold → pipeline is **non-viable** (exclude from shortlist).
+2. **Roster** — every card in the pool whose `taxonomic_profile.synergy_clusters` overlap those clusters, *whatever its `structural_roles` are*. This is the archetype's real footprint and it is what Phase 5A seeds from.
+3. **Role census** — count the roster across all six structural roles: `Enabler/Fodder`, `Engine/Outlet`, `Payload/Payoff`, `Interaction/Disruption`, `Infrastructure/Consistency`, `Standalone Threat`.
+4. **Viability gate** — viable when the roster's `Enabler/Fodder` + `Engine/Outlet` members number ≥ `round(N × 0.05)`, where N is the target deck size. The gate asks one question: does anything in this cluster *turn the payoff on*? A payoff sharing a cluster with thirty cards, none of which feeds it, is a theme, not a pipeline.
+5. Below the gate → **non-viable**, excluded from the shortlist.
+
+The gate counts feeders; the roster carries everyone. Keeping those two numbers apart is the point of this step. A cluster's threats, its own secondary payoffs and its card flow are not enablers and never pass a role filter — an archetype whose roster is filtered down to its feeders loses its own win conditions before a deck is ever sketched.
+
+**Derive the roster in Python off `taxonomic_profile` — never `search_pool(tags=…)`.** Pooled `tags` come only from `tagged.csv`; `Card.to_dict()` does not project `taxonomic_profile` into them. On a cube without `tagged.csv` a tag query returns zero rows *in silence* while `taxonomic_profile` is fully populated. The `tags` filter is also AND-only, so it cannot express "cluster X or cluster Y" in one call.
+
+```python
+# _workspace/<run-token>/_tmp_pipelines.py
+STRUCTURAL_ROLES = ["Enabler/Fodder", "Engine/Outlet", "Payload/Payoff",
+                    "Interaction/Disruption", "Infrastructure/Consistency", "Standalone Threat"]
+
+def prof(c):  return c.get("taxonomic_profile") or {}
+def clus(c):  return set(prof(c).get("synergy_clusters") or [])
+def roles(c): return set(prof(c).get("structural_roles") or [])
+
+want    = clus(payoff)
+# Dedupe first: the cache is copy-expanded (load_merged_pool materialises `multipliers`
+# as duplicate rows), so counting it raw double-counts every common and uncommon and
+# inflates the viability gate unevenly, since rares stay at one row.
+pool    = list({c["name"]: c for c in pool}.values())
+roster  = [c for c in pool if clus(c) & want and c["name"] != payoff["name"]]
+census  = {r: sum(1 for c in roster if r in roles(c)) for r in STRUCTURAL_ROLES}
+feeders = [c for c in roster if roles(c) & {"Enabler/Fodder", "Engine/Outlet"}]
+viable  = len(feeders) >= round(N * 0.05)
+```
 
 **Apply color constraint if specified.**
 
-If the user declared a color preference in Phase 1, also exclude Payoffs whose core pipeline cards (the Payoff + its primary support cards) fall outside the stated color identity.
+If the user declared a color preference in Phase 1, also exclude Payoffs whose core pipeline cards (the Payoff + its feeders) fall outside the stated color identity. The roster itself stays colour-unfiltered here — colours are not locked until Phase 3, and Phase 5A's seed applies the colour gate with `search_pool`.
 
 **Build the shortlist.**
 
 Collect all viable pipelines and rank them by intent (from Phase 1):
-- `Competitive` → rank by highest count of Interaction/Disruption + Infrastructure/Consistency support cards in the pipeline's clusters
+- `Competitive` → rank by `role_census["Interaction/Disruption"] + role_census["Infrastructure/Consistency"]`
 - `Experimental` → rank by highest cross-cluster overlap (Payoff shares synergy clusters with the most distinct card groups)
 - `Fun / Niche` → rank by most unusual win condition (rarest synergy_cluster combination in the pool)
-- `Specific Constraint` → rank by closest match to the user-stated constraint
+- `Specific Constraint` → rank by `feeder_count` descending, then `support_count` descending, then fewest `synergy_clusters` (a payoff whose clusters are *only* the constrained one is a tighter match than one that merely touches it), then name. Named explicitly because "closest match" is not a quantity: without a stated function two runs of the same prompt lock different pipelines.
 
 Select the top 3–5 for the shortlist.
 
@@ -102,8 +127,14 @@ Select the top 3–5 for the shortlist.
 {
   "payoff_card": "<name>",
   "synergy_clusters": ["..."],
-  "support_card_names": ["..."],
-  "support_count": 17,
+  "cluster_card_names": ["..."],
+  "support_count": 37,
+  "role_census": {
+    "Enabler/Fodder": 9, "Engine/Outlet": 4, "Payload/Payoff": 6,
+    "Interaction/Disruption": 9, "Infrastructure/Consistency": 5,
+    "Standalone Threat": 7
+  },
+  "feeder_count": 13,
   "viability_threshold": 2,
   "color_identity": ["U", "R"],
   "fixing_score": "GOOD",
@@ -116,7 +147,9 @@ Select the top 3–5 for the shortlist.
 }
 ```
 
-`support_card_names` is a machine-derived cluster-overlap list and it is **fallible** — it will happily list a card whose oracle text is blank in the chosen colours. It is a starting point, never an instruction. Verify every name against oracle text; rejecting one is a correct outcome, not a failure.
+`cluster_card_names` is a machine-derived cluster-overlap list and it is **fallible** — it will happily list a card whose oracle text is blank in the chosen colours. It is a starting point, never an instruction. Verify every name against oracle text; rejecting one is a correct outcome, not a failure. It is also **not** a filter's output: nothing has been judged out of it yet, which is why Phase 5A can seed from it and record a reason for every cut.
+
+`viability_threshold` is tested against `feeder_count`, never against `support_count`. Testing it against the whole roster would make it unfalsifiable — any payoff with a populated cluster would pass.
 
 `goldfish_turn` is the earliest realistic turn the kill mechanism executes against no resistance, derived from the mana math of the chain itself (oracle-grounded — never a meta claim). `default_role` is `aggressor` / `controller` / `combo`. Both are testable claims, not flavor: Phase 6b's assembly check and the Challenger's pipeline-viability check test the finished list against them.
 
@@ -131,11 +164,18 @@ Ask whether to lower the viability threshold or change pool rules (restart Phase
 
 ## Phase 3 — Splash Evaluation
 
-After locking the pipeline, scan the full pool for off-color cards whose `taxonomic_profile.synergy_clusters` overlap with the selected pipeline's clusters and whose `taxonomic_profile.structural_roles` include `"Payload/Payoff"` or `"Engine/Outlet"`. These are splash candidates — high-value cards that directly support the strategy but fall outside the core color identity.
+After locking the pipeline, scan the full pool for off-color cards whose `taxonomic_profile.synergy_clusters` overlap with the selected pipeline's clusters — **all roles**. These are splash candidates. The ≤3-per-colour cap below already bounds this list, so a role filter buys nothing here and hides the same card classes it hides at Step 2.
 
 For each candidate, check whether it qualifies as a splash:
-- Its **effective** requirement contains exactly 1 color not in `core_colors` — test with `effective_cost.best_mode(card, core_colors, [off_color])` and read the matched mode's `cost_pips`, not raw `color_identity`. A card whose off-colour identity is only reachable through a mode you would not use (e.g. Street Wraith reads as black but is played as a colourless cycler) is **not a splash at all** — `best_mode(card, core_colors, [])` already returns non-`None`, so it belongs in the core pool, not the splash list.
-- No more than 3 cards of that off-color are being considered
+- It is **not a land**. Fixing is a land-slot decision made in Phase 5B steps 3–4 against the whole pool; a dual land is never a splash *card*. Without this, a cluster containing duals hands every splash slot to lands, because they all have CMC 0 and win the tie-break.
+- Its **effective** requirement contains exactly 1 color not in `core_colors`, and **at most one pip** of it. `cost_pips` is a `set`, so it cannot answer "how heavy is this splash" — count the off-colour pips in `mana_cost` directly. A `{1}{B}{B}` card is not a black splash. — test with `effective_cost.best_mode(card, core_colors, [off_color])` and read the matched mode's `cost_pips`, not raw `color_identity`. A card whose off-colour identity is only reachable through a mode you would not use (e.g. Street Wraith reads as black but is played as a colourless cycler) is **not a splash at all** — `best_mode(card, core_colors, [])` already returns non-`None`, so it belongs in the core pool, not the splash list.
+- No more than 3 cards of that off-color: rank by cluster-overlap count descending, then CMC ascending, then name, and take the first 3. Deterministic, so two runs of the same pipeline produce the same splash list.
+
+**Cap the number of splash COLOURS before you cap cards per colour.** The ≤3 rule is per colour, so on its own it will happily qualify three off-colours and nine cards for a two-colour deck — that is a five-colour pile, not a splash, and Phase 5C check 5 passes it because it also counts per colour.
+
+- **At most one splash colour.** If more than one off-colour qualifies, keep the single colour whose candidates have the highest total cluster-overlap count; ties break by lowest total CMC, then by WUBRG order.
+- A **second** splash colour is admissible only when `fixing_score` is GOOD for *every* pair in `core_colors ∪ both splashes`. Never a third.
+- Record the colours you dropped and why in `splash_note`, so the Challenger can see what was considered.
 
 If qualified candidates exist, set `splash_colors` to the list of off-color letters (e.g., `["R"]`) **and record the qualifying card names as `splash_candidates`** — a bounded list, at most 3 names per splash color. Otherwise set `splash_colors = []` and `splash_candidates = []`.
 

@@ -137,7 +137,26 @@ def usable_modes(card: Dict[str, Any]) -> List[Dict[str, Any]]:
     # Base cast. ``mana_cost`` is already the base cost -- optional additional
     # costs (kicker / multikicker / buyback / entwine) live only in the oracle
     # text, so declining them is automatic and we never add the kicked mode.
-    modes = [_mode("cast", card.get("mana_cost") or "", printed_cmc, False)]
+    base_cost = card.get("mana_cost") or ""
+    if not base_cost:
+        # Transform / modal-DFC rows carry ``mana_cost = None``: the printed cost
+        # lives on ``card_faces[0]``. An empty cost has no pips, which would make
+        # every double-faced card look castable in every colour -- the same trap
+        # the land branch above sidesteps. Prefer the front face's cost; fall back
+        # to the printed identity so the card is never free.
+        faces = card.get("card_faces") or []
+        base_cost = (faces[0].get("mana_cost") or "") if faces else ""
+    if not base_cost:
+        identity = list(card.get("color_identity") or [])
+        modes = [{
+            "mode": "cast",
+            "pips": identity,
+            "cost_pips": set(identity),
+            "cmc": printed_cmc,
+            "conditional": False,
+        }]
+    else:
+        modes = [_mode("cast", base_cost, printed_cmc, False)]
 
     oracle = _strip_reminders(card.get("oracle_text") or "")
 

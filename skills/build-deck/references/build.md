@@ -1,31 +1,147 @@
 # build-deck reference — Phases 5–6b: build mechanics
 
-Read at the start of Phase 5; covers the lightweight sweep, the Step-0 sketch-and-select gate, the seven-step build procedure, the pre-flight checks, and the Phase 6b structural-gate invocation. Mechanics only — the IRON RULE, the Counts Principle, and the gate semantics are in SKILL.md.
+Read at the start of Phase 5; covers the seeded sweep, the Step-0 sketch-and-select gate, the seven-step build procedure, the pre-flight checks, and the Phase 6b structural-gate invocation. Mechanics only — the IRON RULE, the Counts Principle, and the gate semantics are in SKILL.md.
 
-The build works from the whole filtered pool (the working pool cache), bounded by `core_colors`, `splash_colors`, and the named `splash_candidates`. There is no separate legal/index split — the grill bundle ships the full `working_pool`, and the sideboard and absence audit see the rest of the cube through it.
+The build works from the whole filtered pool (the working pool cache), bounded by `core_colors`, `splash_colors`, and the named `splash_candidates`. There is no separate legal/index split — the grill bundle ships the full `working_pool`, and the sideboard and absence audit see the rest of the cube through it. Phase 5A's seed is the cluster-scoped slice the pool-blind sketchers see; your own FILL is not bounded by it.
 
-## Phase 5A — lightweight sweep
+## Phase 5A — the seeded sweep
 
-Record a short sweep before committing the list. It is **not** a total-coverage record of every pool card — only two bounded lists:
+The sweep is a **partition of a machine-generated seed**. You do not author the candidate list; you annotate it and subtract from it with a stated reason. Downstream, the Step-0 sketchers are pool-blind and see nothing but `include_candidates` — so a list written from recall becomes the entire universe of cards this deck can contain, and anything recall skipped is never reconsidered by anyone.
+
+### 1. Seed — run the query, don't remember the cards
+
+Write `_workspace/<run-token>/_tmp_seed_sweep.py` and run it over the working pool cache. Two bands:
+
+- **pipeline band** — every colour-usable card overlapping the locked pipeline's `synergy_clusters`, *any structural role*, plus the payoff itself and the named `splash_candidates`.
+- **staple band** — every colour-usable card whose `structural_roles` include `Interaction/Disruption` or `Infrastructure/Consistency`, cluster or no cluster. Without it the interaction- and consistency-leaning lenses in Step 0 have no cards to build from and their divergence is fabricated.
+- **threat band** — every colour-usable card whose `structural_roles` include `Payload/Payoff` or `Standalone Threat`, cluster or no cluster. A cluster-scoped seed plus a role-scoped staple band reaches every answer and no beater: a deck's creatures usually do not share the payoff's cluster, so without this band the sketchers get an archetype with nothing to attack with. This is the Phase 2 roster defect reappearing one phase later, and it is worth a band of its own.
+
+Lands are excluded from all three: they are chosen in steps 3–4 from the whole pool, and the sketchers return slot tables, not land lists.
+
+```python
+import json
+from cuber import cube_search
+
+RUN      = "_workspace/<run-token>"
+CORE     = [...]            # core_colors
+SPLASH   = [...]            # splash_colors
+SPLASH_CANDIDATES = [...]   # the named list from Phase 3 — a splash colour admits nothing else
+CLUSTERS = [...]            # the locked pipeline's synergy_clusters
+PAYOFF   = "<payoff card>"
+STAPLE_ROLES = {"Interaction/Disruption", "Infrastructure/Consistency"}
+THREAT_ROLES = {"Payload/Payoff", "Standalone Threat"}
+STAPLE_CAP   = 40
+THREAT_CAP   = 25
+
+# The cache is copy-expanded: load_merged_pool materialises `multipliers` as duplicate rows
+# (503 rows for 305 distinct cards on a 2x-commons cube). Dedupe by name before counting or
+# seeding, or every common and uncommon is counted twice and appears twice in the slice.
+pool = list({c["name"]: c for c in
+             json.load(open(f"{RUN}/working_pool.json", encoding="utf-8"))}.values())
+
+# No `tags=` argument. Pooled `tags` come only from tagged.csv and are AND-only; a tag
+# query on an untagged cube returns zero rows in silence while taxonomic_profile is
+# fully populated. Filter the profile in Python instead.
+core = cube_search.search_pool(pool, color_identity=CORE)                     # stamped usable_as
+wide = cube_search.search_pool(pool, color_identity=CORE,
+                               splash_color_identity=SPLASH)                 # for splash lookups
+by_name = {c["name"]: c for c in wide}
+
+def prof(c):    return c.get("taxonomic_profile") or {}
+def clus(c):    return set(prof(c).get("synergy_clusters") or [])
+def roles(c):   return set(prof(c).get("structural_roles") or [])
+def is_land(c): return "land" in (c.get("type_line") or "").lower()
+
+want = set(CLUSTERS)
+pipeline = [c for c in core if not is_land(c) and (clus(c) & want or c["name"] == PAYOFF)]
+pipeline += [by_name[n] for n in SPLASH_CANDIDATES
+             if n in by_name and not is_land(by_name[n])]   # lands are excluded from BOTH bands
+
+def band(role_set, cap, taken):
+    picked = sorted((c for c in core
+                     if c["name"] not in taken and not is_land(c) and roles(c) & role_set),
+                    key=lambda c: (float(c.get("cmc") or 0), c["name"]))
+    return picked[:cap], [c["name"] for c in picked[cap:]]
+
+seen = {c["name"] for c in pipeline}
+staple, staple_dropped = band(STAPLE_ROLES, STAPLE_CAP, seen)
+seen |= {c["name"] for c in staple}
+threat, threat_dropped = band(THREAT_ROLES, THREAT_CAP, seen)
+
+def row(c, band):
+    d = {k: c.get(k) for k in
+         ("name", "oracle_text", "type_line", "mana_cost", "cmc", "usable_as")}
+    d["band"] = band
+    return d
+
+seed = ([row(c, "pipeline") for c in pipeline]
+        + [row(c, "staple") for c in staple]
+        + [row(c, "threat") for c in threat])
+json.dump(seed, open(f"{RUN}/seed.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+print(len(pipeline), len(staple), len(threat),
+      "dropped:", len(staple_dropped) + len(threat_dropped))
+```
+
+Two properties this shape buys that a hand-written list does not. `search_pool(color_identity=…)` returns copies stamped with `usable_as` via `effective_cost.best_mode`, so the slice carries the same colour-usability verdict Phase 5C check 4 and the Challenger's item 4 test against. And splash-colour cards enter only by exact name from `SPLASH_CANDIDATES`, so a splash colour still never admits its whole colour.
+
+**Run it from the repo root with `PYTHONPATH=.`** — Python puts the *script's* directory on `sys.path`, not the cwd, so `from cuber import ...` inside `_workspace/<run-token>/_tmp_*.py` raises `ModuleNotFoundError` when run as written. This bites every scripted phase, not just this one.
+
+**Caps.** The pipeline band is never capped — capping it is the original defect in machine form. The staple band is capped at 40 and the threat band at 25 (lowest CMC first, ties by name), and every dropped name goes in `seed_query.staple_dropped` / `seed_query.threat_dropped` so nothing is invisible to the Challenger's absence audit. If the pipeline band alone runs past ~120 cards, the locked clusters are too generic to scope anything: narrow to the clusters the payoff's oracle text actually reads and record the narrowing in `seed_query.clusters_note`. Never truncate the pipeline band.
+
+### 2. Annotate and subtract
+
+Every seed card goes into exactly one of two lists, each entry carrying a reason. There is no third destination and nothing leaves the seed unrecorded.
 
 ```json
 {
   "run_token": "run-…",
   "pipeline_payoff": "<name>",
   "swept_at": "<ISO 8601 UTC>",
+  "seed_query": {
+    "script": "_workspace/<run-token>/_tmp_seed_sweep.py",
+    "core_colors": ["U", "R"], "splash_colors": [], "splash_candidates": [],
+    "clusters": ["Spellslinger", "Flashback/GY-Cast"],
+    "pipeline_band": 37, "staple_band": 38, "seed_total": 75,
+    "staple_cap": 40, "staple_dropped": []
+  },
   "include_candidates": [
-    { "card": "High Tide", "reason": "<one line, grounded in this card's oracle_text and THIS pipeline>" }
+    { "card": "High Tide", "band": "pipeline", "usable_as": null,
+      "count_dependent": false,
+      "reason": "<one line, grounded in this card's oracle_text and THIS pipeline>" },
+    { "card": "Delver of Secrets // Insectile Aberration", "band": "pipeline", "usable_as": null,
+      "count_dependent": true,
+      "reason": "flip rate = instant/sorcery density — verdict deferred to 5B step 6" }
   ],
   "considered_but_excluded": [
-    { "card": "Helm of Awakening", "reason": "<one-line mechanism; count-dependent claims obey the Counts Principle>" }
+    { "card": "Helm of Awakening", "notable": true,
+      "reason": "<one-line mechanism against THIS pipeline>" },
+    { "cards": ["…", "…", "…"], "notable": false,
+      "reason": "<one shared mechanism reason for a batch cut>" }
   ]
 }
 ```
 
-- `include_candidates` — the cards you are building from. One oracle-grounded line each, scoped to this pipeline.
-- `considered_but_excluded` — a **bounded** list of cards a reader would reasonably expect in this deck that you rejected. Not every off-plan card in the pool; the ones worth explaining. Each gets a one-line mechanism reason. This list becomes the `### CARDS CONSIDERED BUT EXCLUDED` section of the analysis (Phase 10).
+- `include_candidates` — what Step 0's sketchers build from. One oracle-grounded line each, scoped to this pipeline.
+- `considered_but_excluded` — the rest of the seed, all of it. A `cards` array cuts a batch under one shared mechanism reason, so subtracting thirty off-plan staples costs one line, not thirty. `notable: true` marks the cuts a reader would ask about; those are what Phase 10 renders as `### CARDS CONSIDERED BUT EXCLUDED`.
+- **Count-dependent cards are not subtracted here.** A card whose value is a count has no denominator at 5A — the list it would be counted against is what 5B produces. It stays in `include_candidates` with `"count_dependent": true`, and its verdict is written at step 6 (SKILL.md, the Counts Principle).
 
-Write it to `_workspace/<run-token>/sweep.json` (kept in the workspace; it is not a saved deck file).
+Write it to `_workspace/<run-token>/sweep.json` (kept in the workspace; it is not a saved deck file). It ships in the Phase 8 grill bundle.
+
+### 3. Verify before sketching
+
+Re-run the seed script with `--verify`, reading `seed.json` and `sweep.json`:
+
+```python
+inc = {e["card"] for e in sweep["include_candidates"]}
+exc = {n for e in sweep["considered_but_excluded"] for n in (e.get("cards") or [e["card"]])}
+names = {c["name"] for c in seed}
+assert inc | exc == names, f"unrecorded: {names - (inc | exc)}"
+assert not (inc & exc),    f"double-listed: {inc & exc}"
+assert not [e for e in sweep["include_candidates"]
+            if e["count_dependent"] and e["card"] in exc]
+```
+
+A card in the seed and in neither list is the exact failure this section exists to prevent — fix and re-run until the asserts pass. Whether a card *is* count-dependent is a reading of oracle text, not an assert; that half is checked by the Challenger (`references/challenger-template.md` item 11).
 
 ## Phase 5B — the build steps (Step 0, then the seven)
 
@@ -45,8 +161,8 @@ Write it to `_workspace/<run-token>/sweep.json` (kept in the workspace; it is no
   | Midrange | most threat-dense / aggressive · most grindy value · most flexible toolbox |
 
 - **Dispatch one sketcher subagent per lens, in parallel** (SKILL.md Phase Protocol markers apply — announce the wave, verify each report's BEGIN/END before use). Each is independent and blind to the others. State the contract as a recipe.
-  - *Input bundle (EXACTLY):* the assigned `lens` (one line); the fixed `archetype_family` + its grounds; the locked `thesis` (`kill_mechanism`, `goldfish_turn`, `default_role`); the Phase 1 intent + power level; the slot band table below + format / deck size N (+ commander identity if any) + `core_colors` / `splash_colors`; and the Phase 5A `include_candidates` slice **with each card's `oracle_text`**. Give it **no other sketch, no signal of your preference, and no wider pool or dossier**.
-  - *Build only from the provided slice* (IRON RULE — never from prior knowledge; do not invent cards). The family is fixed and the slice is cluster-scoped, so staying on-pipeline is bounded for free.
+  - *Input bundle (EXACTLY):* the assigned `lens` (one line); the fixed `archetype_family` + its grounds; the locked `thesis` (`kill_mechanism`, `goldfish_turn`, `default_role`); the Phase 1 intent + power level; the slot band table below + format / deck size N (+ commander identity if any) + `core_colors` / `splash_colors`; and the Phase 5A `include_candidates` slice (machine-seeded, both bands) with each card's `oracle_text`, `type_line`, `mana_cost`, `cmc` and `usable_as`. Give it **no other sketch, no signal of your preference, and no wider pool or dossier**.
+  - *Build only from the provided slice* (IRON RULE — never from prior knowledge; do not invent cards). The family is fixed, the pipeline band is cluster-scoped by query and the staple band is colour-scoped, so staying on-pipeline is bounded by construction rather than by recall.
   - *Output (fixed shape) — one sketch:* `{macro_archetype (= the fixed family), lens, slot_table (% + count per the table below), land_pip_implication (one line), keystone_package, rationale (one line tying THIS build to its lens AND the thesis kill_mechanism)}`. The **keystone_package** is the payoff cluster + the 3–5 load-bearing cards that define THIS build's plan — not the full deck — each with its assigned role and its `oracle_text` quoted from the slice (the judge verifies role-fit from it and gets no pool). The build must deliver the thesis `kill_mechanism` by the `goldfish_turn`.
 
 *0b. Dispatch the shape judge (independent subagent; the SKILL.md Phase Protocol markers apply — announce it, verify BEGIN/END before use).* Its input bundle is EXACTLY: the 2–3 returned sketches (all one `archetype_family`, differing by lens — shape + keystone names/roles + those keystones' oracle text), the locked pipeline `thesis` (`kill_mechanism`, `goldfish_turn`, `default_role`), the Phase 1 intent + power level, the slot band table below + format / deck size N (+ commander identity if any), and `core_colors` / `splash_colors`. Give it **no working pool, no dossier, and no signal of which sketch you prefer** — finding a better card in the pool is Phase 9's job; this judge only chooses among the builds the sketchers produced. State its contract as a recipe:
@@ -140,10 +256,12 @@ Read `taxonomic_profile.resource_exchange` alongside the oracle text — it is t
 
 **6. COUNT-DEPENDENT VERDICTS (the Counts Principle).** For every inclusion or rejection whose value turns on how many other cards qualify (cost reducers, tribal/type-matters payoffs, storm/spell-count triggers, graveyard counts, devotion, threshold, metalcraft, delirium, domain, affinity), state the count as a numerator/denominator against **this deck's list** — not an adjective. Compute it against the mainboard you actually built; if you later swap a card and a denominator moves, recount.
 
+This step is also where every Phase 5A `count_dependent: true` card gets its verdict — INCLUDE or CUT, with the count against this mainboard. A deferred card that reaches Phase 6 without a verdict is an incomplete step 6.
+
 > "Helm of Awakening discounts every nonland card with a generic component: 18 of the 24 nonland cards qualify. INCLUDE."
 
 **7. Record your derivation** as `build_output` (this feeds the grill bundle and Phase 10):
-`macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `thesis_turn` and `default_role` (copied from the locked pipeline's thesis), `slot_allocation`, `land_math`, `pip_math`, `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `restrictions_checklist`, and `skeleton_selection` (Step 0's record: `{chosen, archetype_family, chosen_lens, rejected_sketches: [{lens, slot_table, keystones, why_rejected}], judge_grounds, weak_keystones, false_choice_note, harvested_from_rejected: [{card, from_lens, role}]}`). Phase 6b appends `structural_checks`, `structural_responses`, `coverage`, and `failure_modes`.
+`macro_archetype`, `projected_avg_mv`, `deck_identity` (2–4 sentences), `thesis_turn` and `default_role` (copied from the locked pipeline's thesis), `slot_allocation`, `land_math`, `pip_math`, `count_dependent_verdicts` (step 6's output — one entry per card flagged at 5A, so the Challenger's item 9 recount has a target), `mainboard` (name/qty/role), `sideboard` (name/qty/role/when_to_board), `restrictions_checklist`, and `skeleton_selection` (Step 0's record: `{chosen, archetype_family, chosen_lens, rejected_sketches: [{lens, slot_table, keystones, why_rejected}], judge_grounds, weak_keystones, false_choice_note, harvested_from_rejected: [{card, from_lens, role}]}`). Phase 6b appends `structural_checks`, `structural_responses`, `coverage`, and `failure_modes`.
 
 ## Phase 5C — the pre-flight checks (deterministic)
 
@@ -204,6 +322,6 @@ Reason through each mode against THIS deck. Mitigate only when doing so does not
 | `raced` | Against the fastest clocks in `dossier.threat_profile`, does this deck win or interact before it dies? |
 | `disruption-fizzle` | The critical turn meets one piece of interaction — a counterspell, removal mid-chain. Does the plan survive, retry, or fold? Distinct from `decapitation`: this is the key TURN being interacted with, not the key CARD being answered on sight. |
 
-A `mitigation` names the cards or plan in this list that address the mode, grounded in their oracle text. An `accepted` is legitimate — but it must state the identity/plan cost explicitly; "unlikely" or "not relevant here" is not a cost. The Challenger reviews all six as a checklist (its item 12); a missing mode or an empty reasoning is automatically UNSATISFIED and comes back as a BLOCKING finding.
+A `mitigation` names the cards or plan in this list that address the mode, grounded in their oracle text. An `accepted` is legitimate — but it must state the identity/plan cost explicitly; "unlikely" or "not relevant here" is not a cost. The Challenger reviews all six as a checklist (its item 13); a missing mode or an empty reasoning is automatically UNSATISFIED and comes back as a BLOCKING finding.
 
 The structural-gate report is stored as `build_output.structural_checks` and ships in the grill bundle. **Assembly and coverage are HARD gates** (see SKILL.md Phase 6b): a failure is repaired and re-run, not rationalized. `curve` and `goldfish` are WARN-tier — each flag gets one line in `build_output.structural_responses`.
