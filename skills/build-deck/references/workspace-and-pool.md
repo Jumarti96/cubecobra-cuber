@@ -35,11 +35,20 @@ From the user's answer, infer a `card_pool_rules` object:
 
 Include per-card fields: `name`, `oracle_text`, `mana_cost`, `colors`, `color_identity`, `tags`, `taxonomic_profile`, `cmc`, `type_line`, `rarity`, `power`, `toughness`, `board`.
 
+**The cache is one row per distinct card, not one row per copy.** `load_merged_pool` materialises
+`multipliers` as duplicate dicts — 503 rows for 305 distinct cards on a 2×-commons cube — so
+**dedupe by `name` before writing the cache**. Copy limits are enforced separately by
+`cube_search.get_max_copies`, which needs no duplicate rows. Skip the dedupe and every common and
+uncommon is counted twice in Phase 2's viability gate and appears twice in the Phase 5A seed, while
+rares stay at one row, so the distortion is uneven.
+
 `tags` and `mana_cost` are **load-bearing, not optional**: `deck_audit.mana_audit()` derives `ramp_count` from `tags` (see `deck_audit.RAMP_TAGS`), and pip-demand math needs `mana_cost`. Omit either and the audit silently computes garbage rather than failing.
 
 Exclude: `image URL`, `image Back URL`, `MTGO ID`, `Custom`, `Voucher`, `status`, `Finish`, `Set`, `Collector Number`, and any other display-only metadata.
 
-**One exemption:** the Phase 11 export needs `Set`, `Collector Number`, and image URLs for `deck.tsv`, which the working pool deliberately excludes. Capture those in Phase 0 alongside the working pool — write `_workspace/<run-token>/export_meta.json` keyed by card name — so Phase 11 never has to re-open `enriched.json`.
+**One exemption:** the Phase 11 export needs the set code, collector number and image URLs for `deck.tsv`, which the working pool deliberately excludes. Capture those in Phase 0 alongside the working pool — write `_workspace/<run-token>/export_meta.json` keyed by card name — so Phase 11 never has to re-open `enriched.json`.
+
+Read them under their **enriched.json** keys, which are snake_case: `set`, `collector_number`, `image_url`, `image_back_url`. The TSV *column headings* are `Set` / `Collector Number` / `image URL` — reading the card dict with the heading names returns `None` for every row and the export ships blank columns without erroring.
 
 ## Basic Lands — synthesize when the cube lacks them
 
@@ -60,9 +69,10 @@ Same shape for Plains `{W}`, Swamp `{B}`, Mountain `{R}`, Forest `{G}`. Add a ma
 _workspace/<run-token>/
   working_pool.json          ← the filtered pool cache
   export_meta.json           ← Set / Collector Number / image URLs for the Phase 11 export
-  sweep.json                 ← the lightweight sweep (include + considered-but-excluded)
+  seed.json                  ← the Phase 5A machine seed (pipeline + staple bands)
+  sweep.json                 ← the seed's partition (include + considered-but-excluded)
   grill_input.json           ← the Phase 8 bundle read by the grill agents
   _tmp_*.py                  ← temp validators / scripts
 ```
 
-The Re-evaluation Path (Phase 9) rebuilds from Phase 5 with the next shortlisted pipeline, overwriting `sweep.json` and `grill_input.json` in place — no per-attempt subdirectories are needed for single-deck builds.
+The Re-evaluation Path (Phase 9) rebuilds from Phase 5 with the next shortlisted pipeline, overwriting `seed.json`, `sweep.json` and `grill_input.json` in place — no per-attempt subdirectories are needed for single-deck builds. A new pipeline means new clusters, so the seed is re-run, never reused.

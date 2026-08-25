@@ -1,0 +1,60 @@
+{
+  "skill": "build-deck",
+  "scope": "Phases 0-5A only. The change under test is the Phase 2 support query and the Phase 5A sweep; running the full 11-phase build would add hours per case without touching the mechanism.",
+  "arms": {
+    "new_skill": ".claude/skills/build-deck",
+    "old_skill": "_workspace/skill-eval-20260825/skill-snapshot"
+  },
+  "evals": [
+    {
+      "id": "eval-0",
+      "name": "innistrad UR spellslinger — the original failure",
+      "cube": "innistrad-remastered-set-dmu-dual-lands",
+      "archetype": "Spellslinger / Flashback",
+      "colors": "UR",
+      "format": "40-card",
+      "pool_rules": "commons/uncommons up to 2 copies, rares/mythics 1 copy, max 5 rares+mythics total",
+      "cluster_stats": {"roster": 14, "feeders": 4, "hidden_by_old_filter": 10},
+      "assertions": [
+        "Delver of Secrets // Insectile Aberration appears in sweep.include_candidates",
+        "If present, Delver carries count_dependent: true (its value is a flip RATE, not a card)",
+        "sweep partitions the seed exactly: include + excluded == seed, no overlap, nothing missing",
+        "No card flagged count_dependent: true appears in considered_but_excluded",
+        "The pipeline roster reported at Phase 2 includes Rise from the Tides, Seize the Storm, Festival Crasher and Thing in the Ice"
+      ]
+    },
+    {
+      "id": "eval-1",
+      "name": "innistrad Lands-Matter — extreme hidden ratio",
+      "cube": "innistrad-remastered-set-dmu-dual-lands",
+      "archetype": "Lands-Matter",
+      "colors": "builder's choice",
+      "format": "40-card",
+      "pool_rules": "commons/uncommons up to 2 copies, rares/mythics 1 copy",
+      "cluster_stats": {"roster": 33, "feeders": 7, "hidden_by_old_filter": 26},
+      "assertions": [
+        "The Phase 2 pipeline object reports a roster materially larger than its feeder count",
+        "The viability gate is evaluated against feeder_count, not against the roster size",
+        "sweep partitions the seed exactly",
+        "include_candidates contains at least one card whose structural_roles are Payload/Payoff or Standalone Threat only (a card the old feeder filter could not surface)"
+      ]
+    },
+    {
+      "id": "eval-2",
+      "name": "dominaria-united Kicker/Scaling — cross-cube, 83% hidden",
+      "cube": "dominaria-united---main-set",
+      "archetype": "Kicker / Scaling",
+      "colors": "builder's choice",
+      "format": "40-card",
+      "pool_rules": "commons/uncommons up to 2 copies, rares/mythics 1 copy",
+      "cluster_stats": {"roster": 48, "feeders": 8, "hidden_by_old_filter": 40},
+      "assertions": [
+        "The Phase 2 pipeline object reports roster ~48 against ~8 feeders",
+        "The viability gate is evaluated against feeder_count, not roster size",
+        "sweep partitions the seed exactly",
+        "The seed query is run over the working pool cache, not reconstructed by hand",
+        "search_pool is NOT called with a tags= argument"
+      ]
+    }
+  ]
+}

@@ -22,12 +22,22 @@ If the oracle text does not support the stated role, the card must be replaced.
 
 ## The Counts Principle — Counts, Not Adjectives
 
-No card is good or bad in isolation. Any claim that a card is weak, strong, a trap, a must-include, or "not worth the slot" **when its value depends on how many other cards qualify** must be stated as an actual count against **this** deck's list — a numerator and a denominator — not as an adjective.
+No card is good or bad in isolation. A card is **count-dependent** when its value is a function of how many other cards qualify: cost reducers, tribal and type-matters payoffs, storm and spell-count triggers, graveyard counts, devotion, threshold, metalcraft, delirium, domain, affinity — and any card whose relevant text reads a *rate* rather than a card: flip conditions, prowess, magecraft, "if an instant or sorcery was cast this turn".
+
+Two rules follow. They bind at different phases because they need different things.
+
+**1. State the count.** Any verdict on a count-dependent card — include, cut, trap, must-run, "not worth the slot" — is a numerator and a denominator against **this** deck's list, never an adjective.
 
 > WEAK:  "This cost reducer only reduces generic mana, so it's marginal here."
 > STRONG: "This cost reducer reduces generic mana; 16 of the 24 nonland cards in this list have a generic component. INCLUDE."
 
-This binds every card whose value is a function of how many others qualify: cost reducers, tribal and type-matters payoffs, storm and spell-count triggers, graveyard counts, devotion, threshold, metalcraft, delirium, domain, affinity. Compute the count from the list you actually built; if the list changes, recount.
+**2. Cut only where a denominator exists.** The denominator is a built list, and Phase 5A has none — the list is what Phase 5B produces. So a count-dependent card is **not decided at Phase 5A**: it stays in `include_candidates` flagged `"count_dependent": true`, and its verdict is written at Phase 5B **step 6 — COUNT-DEPENDENT VERDICTS**, against the mainboard that exists by then. A count-dependent name in `considered_but_excluded` is a Phase 5A error; the Challenger raises it BLOCKING (`references/challenger-template.md` item 11).
+
+**The one exception — a ceiling already fixed by an earlier phase.** Some counts have an upper bound that is knowable at 5A because a previous phase locked it: `core_colors ∪ splash_colors` is locked at Phase 3, and deck size and format at Phase 1. Domain in a two-colour deck caps at 2 of 5; a "for each basic land type you control" payoff cannot beat that ceiling no matter what 5B builds. Cutting on a *ceiling* is still a count, so it obeys rule 1 — record it as `"reason": "domain ceiling 2/5 — core_colors locked to [G,W] at Phase 3"`. What you may not do is cut on a *guess about the eventual denominator*: "this deck probably won't have many instants" is the adjective this rule exists to stop.
+
+> The failure this closes: `Delver of Secrets` was cut at Phase 5A as "a 1-mana beater". Its flip rate is instant/sorcery density; in the lists actually built it was 43.6% — a number that could not be written at 5A, and was not.
+
+Compute counts from the list you actually built; if the list changes, recount.
 
 ---
 
@@ -170,7 +180,7 @@ Run **Pipeline Discovery** per `references/discovery.md`: find payoff candidates
 
 Present the shortlist to the user. For each pipeline entry display:
 - Payoff card name and its synergy cluster(s)
-- Supporting card count (Enabler/Fodder + Engine/Outlet in the cluster)
+- Cluster roster size and its role census — e.g. `37 cards: 13 enabler/engine · 6 payoff · 9 interaction · 9 other`. The viability gate ran on the 13.
 - Color identity of the pipeline's core cards
 - Fixing score for that color combination
 
@@ -194,21 +204,24 @@ Skip for 40-card and 60-card formats. Follow the procedure in `references/discov
 
 ## Phase 5: Deck Build
 
-You build the deck. **Read `references/build.md` now.** It holds the seven-step build procedure, the slot-allocation table, the land-count model (formula + hypergeometric refinement, computed by `deck_audit.land_target` — never a percentage read off a table), the pip-source math, the lightweight sweep shape, and the Phase 6b invocation.
+You build the deck. **Read `references/build.md` now.** It holds the seven-step build procedure, the slot-allocation table, the land-count model (formula + hypergeometric refinement, computed by `deck_audit.land_target` — never a percentage read off a table), the pip-source math, the seeded-sweep recipe and shape, and the Phase 6b invocation.
 
-### Phase 5A — Lightweight Sweep
+### Phase 5A — Seeded Sweep
 
-Before committing the list, record a short sweep so no strong card is silently skipped and the analysis can show what was considered:
-- **INCLUDE candidates** — cards you are building from, each with a one-line oracle-grounded reason scoped to this pipeline.
-- **Considered but excluded** — a *bounded* list (not every pool card) of cards a reader would expect you to run but you rejected, each with a one-line mechanism reason. Count-dependent rejections obey the Counts Principle.
+The sweep is a **partition of a machine-generated seed**, not a list written from memory. The Step-0 sketchers are pool-blind and see only `include_candidates`, so whatever the sweep omits no agent in this run ever considers again.
 
-The considered-but-excluded entries become the `### CARDS CONSIDERED BUT EXCLUDED` section of the analysis. The sweep shape is in `references/build.md`.
+1. **Seed.** Run the seed query in `references/build.md` over the working pool cache: every colour-usable card overlapping the locked pipeline's synergy clusters at *any* structural role, plus the colour-usable interaction, consistency and threat cards any deck in these colours draws on. Membership is the query's output; you do not choose it.
+2. **Annotate and subtract.** Every seed card lands in exactly one of two lists with a stated reason — `include_candidates` (what the sketchers build from) or `considered_but_excluded` (cut, one-line mechanism; batch cuts may share one reason). No third destination, nothing dropped silently.
+3. **Defer the count-dependent.** A card whose value is a count is not subtracted here — no list exists yet to count it against (the Counts Principle). It stays in `include_candidates` with `"count_dependent": true` and is decided at Phase 5B step 6. The one exception is a count whose ceiling an earlier phase already fixed.
+4. **Verify.** Re-run the seed script in `--verify` mode: it asserts the two lists partition the seed exactly, with no name in both and none missing. Fix and re-run until it passes.
+
+`sweep.json` ships in the Phase 8 grill bundle and the Challenger audits it as checklist item 11. The `notable` exclusions become the `### CARDS CONSIDERED BUT EXCLUDED` section of the analysis. Shape, seed script and cap rules are in `references/build.md`.
 
 ### Phase 5B — Build
 
-Build from the INCLUDE candidates. For each card, its oracle text (from the working pool cache) must support the role you assign; if it does not, the card does not go in.
+Sketch from `include_candidates`; FILL (step 5) draws from the whole colour-usable pool. The slice bounds the pool-blind sketchers, not your own build. For each card, its oracle text (from the working pool cache) must support the role you assign; if it does not, the card does not go in.
 
-**Before you classify, run Step 0 — sketch → judge → lock (every build):** pin the `archetype_family` from the locked `thesis.default_role` + Phase 1 intent, assign 2–3 build **lenses**, and dispatch **one independent, pool-blind sketcher subagent per lens, in parallel** (subagent protocol above) — each blind to the others and building only from the `include_candidates` slice. Then an independent, pool-blind **shape judge** picks one **build**; lock it, and carry its `weak_keystones` and rejected-build **harvest** into FILL. The three sketches are builds of ONE archetype, not competing archetypes. Breaks a greedy single-commit that varies run-to-run and blind-spots viable builds. Mechanics in `references/build.md`.
+**Before you classify, run Step 0 — sketch → judge → lock (every build):** pin the `archetype_family` from the locked `thesis.default_role` + Phase 1 intent, assign 2–3 build **lenses**, and dispatch **one independent, pool-blind sketcher subagent per lens, in parallel** (subagent protocol above) — each blind to the others and building only from the machine-seeded `include_candidates` slice. Then an independent, pool-blind **shape judge** picks one **build**; lock it, and carry its `weak_keystones` and rejected-build **harvest** into FILL. The three sketches are builds of ONE archetype, not competing archetypes. Breaks a greedy single-commit that varies run-to-run and blind-spots viable builds. Mechanics in `references/build.md`.
 
 Then follow the numbered steps in `references/build.md`: **0 SKETCH→JUDGE→LOCK → 1 CLASSIFY (lock the selected) → 2 ALLOCATE SLOTS → 3 LAND COUNT → 4 MANA SOURCES → 5 FILL (+ harvest) → 6 COUNT-DEPENDENT VERDICTS → 7 record `build_output`**.
 
@@ -248,7 +261,7 @@ Run the structural checks (the deck-building methodology, mechanized — thresho
 - **HARD — treat like a mana-audit FAIL:** `assembly` (an engine role's P(seen by thesis turn) < 0.75 — either add functional copies, or the thesis turn was optimistic: revise it and say so) and `coverage` (missing class, phantom card name, empty concession). Repair and re-run. Assembly counts **reliability-weighted** copies: a conditional functional copy is declared at a weight below one with its mechanism, never counted as a full copy.
 - **WARN-tier — respond, don't rebuild:** `curve` and `goldfish`. Each WARN flag gets one line in `build_output.structural_responses` stating the mechanism-grounded reason the deviation is accepted.
 
-**Also record `build_output.failure_modes`** — all six modes, none omitted: **flood**, **screw**, **decapitation**, **gas-out**, **raced**, **disruption-fizzle**. Each entry is exactly one of two shapes: a `mitigation` (mechanism-grounded, naming the cards or plan that address it) or an `accepted` (stating explicitly what mitigating would cost the deck's identity or winning plan). There is no third shape. Mode definitions and the JSON spec are in `references/build.md`. The Challenger reviews every entry as a checklist (its item 12); an entry it cannot accept is a BLOCKING finding.
+**Also record `build_output.failure_modes`** — all six modes, none omitted: **flood**, **screw**, **decapitation**, **gas-out**, **raced**, **disruption-fizzle**. Each entry is exactly one of two shapes: a `mitigation` (mechanism-grounded, naming the cards or plan that address it) or an `accepted` (stating explicitly what mitigating would cost the deck's identity or winning plan). There is no third shape. Mode definitions and the JSON spec are in `references/build.md`. The Challenger reviews every entry as a checklist (its item 13); an entry it cannot accept is a BLOCKING finding.
 
 Store the full report as `build_output.structural_checks`. It ships in the grill bundle.
 
@@ -280,6 +293,7 @@ The bundle contains:
 - `restrictions_checklist`: the compliance checklist from Phase 5
 - `build_output`: your recorded derivation — `macro_archetype`, `deck_identity`, `thesis_turn`, `default_role`, `slot_allocation`, `skeleton_selection` (the Step-0 sketch → judge → lock record), `land_math`, `pip_math`, `coverage`, `failure_modes`, `structural_checks`, `structural_responses`. This lets the grill audit the **derivation**, not just the list.
 - `validation_report`: the Phase 5C check results (all PASS by the time you get here)
+- `sweep`: the Phase 5A `sweep.json` — the seed query's parameters and the two lists it was partitioned into. This is how a bad 5A exclusion becomes reviewable instead of only re-discoverable.
 - `working_pool`: the full working pool array from the cache — the grill's evidence base and what its absence audit scans
 - `dossier`: the cube dossier (for the threat-profile sideboard and interaction checks)
 
@@ -289,7 +303,7 @@ Both Phase 9 agents read only this file — never `enriched.json`, the working p
 
 ## Phase 9: Self-Grill (Hard Gate)
 
-**Read `references/challenger-template.md` now.** Spawn the two agents it describes — a Proposer that defends every card with an oracle quote, and a Challenger that attacks the deck independently and runs the full checklist (membership, oracle, restrictions, identity fit, better alternatives, proportional validation, sideboard cohesion, mana re-run, **derivation audit**, **absence audit**, pipeline viability, and **failure-mode review**). Neither agent sees the other's output during generation. Both dispatches and both returned reports follow the subagent protocol in **Phase Protocol** — verify the BEGIN/END markers before adjudicating.
+**Read `references/challenger-template.md` now.** Spawn the two agents it describes — a Proposer that defends every card with an oracle quote, and a Challenger that attacks the deck independently and runs the full checklist (membership, oracle, restrictions, identity fit, better alternatives, proportional validation, sideboard cohesion, mana re-run, **derivation audit**, **absence audit**, **sweep audit**, pipeline viability, and **failure-mode review**). Neither agent sees the other's output during generation. Both dispatches and both returned reports follow the subagent protocol in **Phase Protocol** — verify the BEGIN/END markers before adjudicating.
 
 ### Resolve Grill (you adjudicate)
 
@@ -367,9 +381,10 @@ Saved:
 | **Mana infrastructure, fixing score** | `dossier.mana_infrastructure.duals_by_pair` — use the `free` count. Verify named lands against oracle before trusting it |
 | **Rituals, sweepers, sac outlets, tutors** | `dossier.structural_census` — but a 0-match proves nothing: see `census_caveat` |
 | **What the sideboard answers** | `dossier.threat_profile` + the rest of the cube |
-| Filter by color/type/tag/CMC | `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` — admits a card if `effective_cost.best_mode` finds a usable mode (a colourless/in-colour cycler or kicker-decline counts, even off printed identity); each returned card carries `usable_as` (`None` = normal cast, else the mode, e.g. `"cycler"`). Returned dicts are copies — the tag never mutates the pool cache |
+| Filter by color/type/CMC | `cube_search.search_pool(pool, color_identity=core_colors, splash_color_identity=splash_colors, ...)` — admits a card if `effective_cost.best_mode` finds a usable mode (a colourless/in-colour cycler or kicker-decline counts, even off printed identity); each returned card carries `usable_as` (`None` = normal cast, else the mode, e.g. `"cycler"`). Returned dicts are copies — the tag never mutates the pool cache. **Never pass `tags=`**: pooled `tags` come only from `tagged.csv`, are AND-only, and return zero rows *in silence* on a cube without one. Filter `taxonomic_profile` in Python instead |
 | Query Payoff candidates | Filter working pool cache by `taxonomic_profile.structural_roles` containing `"Payload/Payoff"` |
-| Query synergy support | Filter working pool cache by `taxonomic_profile.synergy_clusters` overlap + `"Enabler/Fodder"` or `"Engine/Outlet"` in `structural_roles` |
+| **Query a pipeline's cluster roster** | Filter working pool cache by `taxonomic_profile.synergy_clusters` overlap, **all roles** — a role filter hides an archetype's own payoffs, threats and card flow. This roster is what Phase 5A seeds from |
+| Count a pipeline's feeders (viability gate only) | The roster subset whose `structural_roles` include `"Enabler/Fodder"` or `"Engine/Outlet"`. The gate is tested against this count, never against the roster |
 | **Card resource profile (mana/card economy)** | `taxonomic_profile.resource_exchange` from the working pool — `Mana:`/`Cards:`/`Board:`/`Life:` labels, empty = neutral. Key absent (untagged cube) → derive from oracle text |
 | Find commander candidates | `commander_finder.find_commanders(id, color_identity)` |
 | Display commander table | `commander_finder.format_commanders_table(candidates)` |

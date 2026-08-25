@@ -61,7 +61,9 @@ FAILURE MODES
  Verdict is "mitigation" or "accepted"; Reasoning is the entry's text, verbatim.}
 
 CARDS CONSIDERED BUT EXCLUDED
-{The sweep's considered_but_excluded entries, reproduced as card | reason.}
+{The sweep's `considered_but_excluded` entries flagged `notable: true`, reproduced as card | reason.
+ Batch entries (a `cards` array sharing one reason) render as a single row with the names comma-joined.
+ The full partition stays in sweep.json — this section is the curated view.}
 
 MANA AUDIT: {PASS/WARN/FAIL}
 ──────────────────────────────────────────────────────────────────
@@ -174,7 +176,7 @@ restrictions_status: "<PASS|FAIL>"
    - `### INSTANTS & SORCERIES ({N})` — card table in a fenced code block; omit if empty
    - `### OTHER SPELLS ({N})` — card table in a fenced code block; omit if empty
 2. `## SIDEBOARD ({N})` — card table in a fenced code block
-3. `## ANALYSIS` — free Markdown body (NOT in a code block). **MUST open with `### DECK IDENTITY`**, then free-form observations (at least one substantive), then `### STRUCTURAL CHECKS` (the `format_checks_report` output in a fenced code block plus any `structural_responses` lines), then `### FAILURE MODES` (the six-row `Mode | Verdict | Reasoning` table from `build_output.failure_modes`), then `### CARDS CONSIDERED BUT EXCLUDED` (the sweep's `considered_but_excluded` entries).
+3. `## ANALYSIS` — free Markdown body (NOT in a code block). **MUST open with `### DECK IDENTITY`**, then free-form observations (at least one substantive), then `### STRUCTURAL CHECKS` (the `format_checks_report` output in a fenced code block plus any `structural_responses` lines), then `### FAILURE MODES` (the six-row `Mode | Verdict | Reasoning` table from `build_output.failure_modes`), then `### CARDS CONSIDERED BUT EXCLUDED` (the sweep's `considered_but_excluded` entries flagged `notable: true`).
 4. `## MANA AUDIT: {PASS|WARN|FAIL}` — audit report in a fenced code block
 5. `## RESTRICTIONS COMPLIANCE` — checklist in a fenced code block
 
