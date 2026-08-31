@@ -15,7 +15,7 @@ Read the IRON RULE and the counts principle before doing anything — they bind 
 ## IRON RULE — Oracle Text Or It Didn't Happen
 
 **Never assume what a card does from prior knowledge.**
-Every inclusion and justification MUST cite `oracle_text` from the working pool cache (`_workspace/<run-token>/working_pool.json`). The Phase 9 agents cite oracle text from the grill input bundle (`_workspace/<run-token>/grill_input.json`).
+Every inclusion and justification MUST cite `oracle_text` from the working pool cache (`_workspace/<run-token>/working_pool.json`). The Phase 9 agents cite oracle text from their own Phase 8 bundle (`grill_proposer.json` / `grill_challenger.json`).
 If the oracle text does not support the stated role, the card must be replaced.
 
 ---
@@ -49,7 +49,7 @@ Compute counts from the list you actually built; if the list changes, recount.
 
 No banner, no phase. The banner is written the moment the phase begins — not retroactively, not batched with the next one. A phase whose banner never appeared is a phase that was skipped.
 
-**Subagent protocol (the Phase 5B shape judge and the Phase 9 agents):**
+**Subagent protocol (the Phase 5B skeleton critic and the Phase 9 agents):**
 
 1. When dispatching, announce it: `⏳ Dispatching Proposer + Challenger`.
 2. Every dispatch prompt mandates that the agent's report **open** with `=== <ROLE> REPORT — BEGIN ===` and **close** with `=== <ROLE> REPORT — END ===`.
@@ -120,11 +120,19 @@ Infer the `card_pool_rules` object from the answer — the JSON shape and field 
 
 **Display the inferred `card_pool_rules` and ask the user to confirm before proceeding.** If the user corrects the inferred object, update it and re-display. Proceed only after explicit confirmation.
 
-Once confirmed, pass `card_pool_rules` to `cube_search.load_merged_pool(id, card_pool_rules=...)`. All subsequent phases use this filtered pool exclusively.
+Once confirmed, write `_workspace/<run-token>/run_config.json` — `{run_token, cube_slug, short_id, format, card_pool_rules}` (+ `commander` once Phase 4 picks one). Every shipped script reads it; this is what lets them be format- and cube-generic instead of hardcoded to one run.
 
 ### Working Pool Cache
 
-After loading the filtered pool, write `_workspace/<run-token>/working_pool.json`. Track this path — all subsequent phases reference it. (Per-card field lists, the load-bearing `tags`/`mana_cost` note, and the `export_meta.json` capture for Phase 11 are in `references/workspace-and-pool.md`.)
+```
+PYTHONPATH=. PYTHONIOENCODING=utf-8 python skills/build-deck/scripts/build_pool.py --run <run-token>
+```
+
+It loads the filtered pool through `cube_search.load_merged_pool`, dedupes by name (the cache is one row per **distinct card**, not per copy), synthesizes any missing basics, backfills DFC `mana_cost`/`power`/`toughness` from `card_faces[0]`, and writes `working_pool.json`. All subsequent phases use this file exclusively.
+
+The DFC backfill is not cosmetic: `enriched.json` leaves `mana_cost` null on double-faced cards, which zeroes their pip contribution in every mana audit and makes `effective_cost.best_mode` reject them as unusable in every colour. On one measured cube that silently removed 41 cards from the colour gate.
+
+Do **not** write a readable pool dump alongside it. (Per-card field lists and the Phase 11 `export_meta.json` capture are in `references/workspace-and-pool.md`.)
 
 **Do not read `enriched.json` after Phase 0 completes.** All card data for Phases 2–9 comes from the working pool cache and the bundle derived from it.
 
@@ -208,35 +216,37 @@ You build the deck. **Read `references/build.md` now.** It holds the seven-step 
 
 ### Phase 5A — Seeded Sweep
 
-The sweep is a **partition of a machine-generated seed**, not a list written from memory. The Step-0 sketchers are pool-blind and see only `include_candidates`, so whatever the sweep omits no agent in this run ever considers again.
+The sweep is a **partition of a machine-generated seed**, not a list written from memory. The Step-0 critic is pool-blind and sees only `include_candidates`, so whatever the sweep omits is not reconsidered until Phase 9.
 
-1. **Seed.** Run the seed query in `references/build.md` over the working pool cache: every colour-usable card overlapping the locked pipeline's synergy clusters at *any* structural role, plus the colour-usable interaction, consistency and threat cards any deck in these colours draws on. Membership is the query's output; you do not choose it.
-2. **Annotate and subtract.** Every seed card lands in exactly one of two lists with a stated reason — `include_candidates` (what the sketchers build from) or `considered_but_excluded` (cut, one-line mechanism; batch cuts may share one reason). No third destination, nothing dropped silently.
+1. **Seed.** Run `scripts/seed_sweep.py` (invocation in `references/build.md`). Four bands: cluster overlap at *any* role, plus role-scoped bands for interaction/consistency, threats, and engines/fodder. Membership is the query's output; you do not choose it.
+2. **Annotate and subtract.** Every seed card lands in exactly one of two lists with a stated reason — `include_candidates` or `considered_but_excluded` (cut, one-line mechanism; batch cuts may share one reason). Write them straight into `sweep.json`; no second partition file. No third destination, nothing dropped silently.
 3. **Defer the count-dependent.** A card whose value is a count is not subtracted here — no list exists yet to count it against (the Counts Principle). It stays in `include_candidates` with `"count_dependent": true` and is decided at Phase 5B step 6. The one exception is a count whose ceiling an earlier phase already fixed.
-4. **Verify.** Re-run the seed script in `--verify` mode: it asserts the two lists partition the seed exactly, with no name in both and none missing. Fix and re-run until it passes.
+4. **Verify.** Re-run `seed_sweep.py --verify`: it asserts the two lists partition the seed exactly, with no name in both and none missing. Fix and re-run until it passes.
 
-`sweep.json` ships in the Phase 8 grill bundle and the Challenger audits it as checklist item 11. The `notable` exclusions become the `### CARDS CONSIDERED BUT EXCLUDED` section of the analysis. Shape, seed script and cap rules are in `references/build.md`.
+`sweep.json` ships in the Phase 8 Challenger bundle and the Challenger audits it as checklist item 11. The `notable` exclusions become the `### CARDS CONSIDERED BUT EXCLUDED` section of the analysis. Band definitions and cap rules are in `references/build.md`.
 
 ### Phase 5B — Build
 
-Sketch from `include_candidates`; FILL (step 5) draws from the whole colour-usable pool. The slice bounds the pool-blind sketchers, not your own build. For each card, its oracle text (from the working pool cache) must support the role you assign; if it does not, the card does not go in.
+Draft the skeleton from `include_candidates`; FILL (step 5) draws from the whole colour-usable pool. The slice bounds the pool-blind critic, not your own build. For each card, its oracle text (from the working pool cache) must support the role you assign; if it does not, the card does not go in.
 
-**Before you classify, run Step 0 — sketch → judge → lock (every build):** pin the `archetype_family` from the locked `thesis.default_role` + Phase 1 intent, assign 2–3 build **lenses**, and dispatch **one independent, pool-blind sketcher subagent per lens, in parallel** (subagent protocol above) — each blind to the others and building only from the machine-seeded `include_candidates` slice. Then an independent, pool-blind **shape judge** picks one **build**; lock it, and carry its `weak_keystones` and rejected-build **harvest** into FILL. The three sketches are builds of ONE archetype, not competing archetypes. Breaks a greedy single-commit that varies run-to-run and blind-spots viable builds. Mechanics in `references/build.md`.
+**Before you classify, run Step 0 — propose → critique → lock (every build):** pin the `archetype_family` from the locked `thesis.default_role` + Phase 1 intent, draft the skeleton (slot table + 3–5 keystones with oracle text quoted), then dispatch **one independent, pool-blind skeleton critic** (subagent protocol above) seeing only your skeleton and the machine-seeded `include_candidates` slice — never told the skeleton is yours. It must return `weak_keystones`, a `strongest_alternative` argued against the thesis, and `thesis_risk`. Resolve every weak keystone and **harvest** the alternative role-for-role into FILL. Mechanics and the trade-off this accepts are in `references/build.md`.
 
-Then follow the numbered steps in `references/build.md`: **0 SKETCH→JUDGE→LOCK → 1 CLASSIFY (lock the selected) → 2 ALLOCATE SLOTS → 3 LAND COUNT → 4 MANA SOURCES → 5 FILL (+ harvest) → 6 COUNT-DEPENDENT VERDICTS → 7 record `build_output`**.
+Then follow the numbered steps in `references/build.md`: **0 PROPOSE→CRITIQUE→LOCK → 1 CLASSIFY → 2 ALLOCATE SLOTS → 3 LAND COUNT → 4 MANA SOURCES → 5 FILL (+ harvest) → 6 COUNT-DEPENDENT VERDICTS → 7 record `build_output`**.
 
 ### Phase 5C — Pre-flight Validation (deterministic)
 
-Write `_workspace/<run-token>/_tmp_validate_build.py` and run the light checks in `references/build.md` (deck size, exact-name membership, copy limits, colour usability, splash cap). Every check is a string or number comparison. The colour check tests **usability via `effective_cost.best_mode`**, not raw `color_identity`, so a card played by a colourless/in-colour mode (e.g. a cycler) is not falsely rejected — see build.md check 4. Fix any failure directly, then re-run until all pass. Do not proceed with a failing check.
+Run `scripts/validate_build.py --run <token> --deck <dir>` (deck size, exact-name membership, copy limits, colour usability, splash cap). Every check is a string or number comparison. The colour check tests **usability via `effective_cost.best_mode`**, not raw `color_identity`, so a card played by a colourless/in-colour mode (e.g. a cycler) is not falsely rejected. Fix any failure directly, then re-run until all pass. Do not proceed with a failing check, and never hand-patch a validator to make it agree.
 
 ---
 
 ## Phase 6: Mana Audit Gate
 
-Convert the mainboard into card dicts (join `name` against the working pool cache).
+```
+PYTHONPATH=. PYTHONIOENCODING=utf-8 python skills/build-deck/scripts/mana_audit.py \
+    --run <run-token> --deck <deck-dir>
+```
 
-Run `deck_audit.mana_audit(deck_cards, format, commander_cards, core_colors=core_colors, splash_colors=splash_colors)`.
-Display the report using `deck_audit.format_audit_report(audit)`.
+It joins the mainboard against the working pool cache, passes the commander through on the commander formats, prints the formatted report and writes `audit.json` (which Phase 8 ships to both grill agents). Exit 1 means FAIL.
 
 The land count is a function of deck size, curve and acceleration only — there is no archetype term, so the mana audit takes no `macro_archetype`. (You still compute `macro_archetype` for the Phase 6b structural curve check, which does use it.)
 
@@ -282,22 +292,25 @@ All sideboard cards come from the pool and count against combined copy limits.
 
 ---
 
-## Phase 8: Grill Input Bundle
+## Phase 8: Grill Input Bundles
 
-Write `_workspace/<run-token>/grill_input.json`.
+```
+PYTHONPATH=. PYTHONIOENCODING=utf-8 python skills/build-deck/scripts/build_bundle.py \
+    --run <run-token> --deck <deck-dir>
+```
 
-The bundle contains:
-- `deck`: array of all mainboard + sideboard cards, each with `name`, `oracle_text`, `colors`, `color_identity`, `cmc`, `type_line`, `rarity`, `role` (from Phase 5), and `board`
-- `audit`: the mana audit result object from Phase 6
-- `card_pool_rules`: the confirmed pool rules object from Phase 0
-- `restrictions_checklist`: the compliance checklist from Phase 5
-- `build_output`: your recorded derivation — `macro_archetype`, `deck_identity`, `thesis_turn`, `default_role`, `slot_allocation`, `skeleton_selection` (the Step-0 sketch → judge → lock record), `land_math`, `pip_math`, `coverage`, `failure_modes`, `structural_checks`, `structural_responses`. This lets the grill audit the **derivation**, not just the list.
-- `validation_report`: the Phase 5C check results (all PASS by the time you get here)
-- `sweep`: the Phase 5A `sweep.json` — the seed query's parameters and the two lists it was partitioned into. This is how a bad 5A exclusion becomes reviewable instead of only re-discoverable.
-- `working_pool`: the full working pool array from the cache — the grill's evidence base and what its absence audit scans
-- `dossier`: the cube dossier (for the threat-profile sideboard and interaction checks)
+It writes **two** files, one per Phase 9 role, and prints both sizes:
 
-Both Phase 9 agents read only this file — never `enriched.json`, the working pool cache, or any other cube data file.
+| File | Contents | Read by |
+|---|---|---|
+| `grill_proposer.json` (~25 KB) | `deck`, `deck_meta`, `audit`, `card_pool_rules`, `restrictions_checklist`, `validation_report`, `build_output_lite` | the Proposer, only |
+| `grill_challenger.json` (~250 KB) | the above plus full `build_output`, `sweep`, `working_pool`, `dossier` | the Challenger, only |
+
+**Why two files and not one with instructions.** The Proposer defends the cards in `deck`; it never needs the pool or the dossier, which are ~77% of the bundle. Telling one agent "do not read that key" is a prompt-adherence gamble — splitting the file is a guarantee. `build_output_lite` deliberately withholds `count_dependent_verdicts`: the Proposer's contract requires it to state counts *itself*, so handing it mine would be anti-adversarial.
+
+The `deck` rows carry `tags` (so the Challenger's item-8 `mana_audit` re-run reproduces `accel_count` instead of computing zero and reporting a phantom discrepancy) and `usable_as` + `cast_mode` (so the Proposer can meet its off-identity contract by naming the legalising mode). The Challenger's `working_pool` is projected down by four fields that no checklist item reads; `oracle_text` and `taxonomic_profile` are never trimmed — they are the IRON RULE's evidence base. Both files are written with compact separators; nothing parses them by line.
+
+Each Phase 9 agent reads only its own file — never `enriched.json`, the working pool cache, or any other cube data file.
 
 ---
 
@@ -322,7 +335,7 @@ You built this deck, so you defend it and judge the Challenger's findings. Every
 
 **2. Repair the deck yourself.** Apply every `IMPLEMENT` row, recount any count-dependent verdict whose denominator moved, then re-run the Phase 5C validator, the Phase 6 audit, and the Phase 6b gate on the result.
 
-**3. Approval round** (skip only when the Challenger reported zero BLOCKING findings). Send the Resolution Table plus the updated deck list back to the **same Challenger agent** (SendMessage — its context is intact; do not spawn a fresh one). It returns a verdict per BLOCKING finding: RESOLVED or UNRESOLVED with a one-line reason. Any UNRESOLVED verdict → one more repair + review round. **Cap: two review rounds.** BLOCKING findings still UNRESOLVED after round two are escalated to the user with both sides' reasoning; the user rules.
+**3. Approval round** (skip only when the Challenger reported zero BLOCKING findings). Send back to the **same Challenger agent** (SendMessage — its context is intact; do not spawn a fresh one): the Resolution Table, **only the changed slots** (`−<card> +<card>` per swap, with counts), and the re-run gate outputs **in full**. Do not resend the whole deck list — its context already holds the previous one, and the gate outputs are what actually prove the repair. It returns a verdict per BLOCKING finding: RESOLVED or UNRESOLVED with a one-line reason. Any UNRESOLVED verdict → one more repair + review round. **Cap: two review rounds.** BLOCKING findings still UNRESOLVED after round two are escalated to the user with both sides' reasoning; the user rules.
 
 **4. Finalization gate.** Phase 10 is reachable only when every BLOCKING finding is RESOLVED — or the user has ruled on it — AND the final list satisfies: every card in the cube + oracle text supports every role + audit ≥ WARN + Phase 5C all-PASS + Phase 6b HARD gates pass.
 
@@ -347,7 +360,14 @@ Display the deck using the enforced format. **Section order is strict — do not
 
 **Read `references/render-and-save.md` now.** It holds the display template, the format rules (including: **no Scryfall links, no external links of any kind, card names as plain text everywhere**), and the Phase 11 file specs.
 
-**Header counts are derived, then verified.** Every section header carries a count (`## MAINBOARD (24 spells + 16 lands = 40)`, `### CREATURES (13)`). Compute each from the deck arrays at render time — never hand-write it, never copy it from a previous version. After writing `analysis.md`, re-parse it and confirm every section's summed `Qty` matches its header and that the file contains zero occurrences of `scryfall`.
+```
+PYTHONPATH=. PYTHONIOENCODING=utf-8 python skills/build-deck/scripts/render_save.py \
+    --run <run-token> --deck <deck-dir> [--save --name <deck-slug>]
+```
+
+Without `--save` it writes `analysis_preview.md` in the run dir; with it, all four files under `cubes/<id>/decks/<name>/`. It emits every **mechanical** section from the deck arrays — card tables, header counts, structural report, failure-mode table, mana audit, restrictions checklist. You author only `build_output.analysis_body` (`### DECK IDENTITY` + free-form observations). Deriving the headers rather than typing them makes header-versus-list drift impossible, not merely detectable.
+
+Then verify: `scripts/validate_analysis.py --run <token> --deck <dir>` (add `--saved` after Phase 11).
 
 Ask: **"Save this deck? [y/N]"**
 
@@ -357,7 +377,7 @@ Ask: **"Save this deck? [y/N]"**
 
 On confirmation, prompt for a deck name if not already provided. Sanitize to a filesystem-safe slug (lowercase, alphanumeric + hyphens).
 
-All four files go into a single subfolder: `cubes/<id>/decks/<name>/`
+All four files go into a single subfolder: `cubes/<id>/decks/<name>/`. Re-run `render_save.py` with `--save --name <slug>`; it builds `export_meta.json` for the deck's cards at this point (not the whole pool at Phase 0) and writes all four.
 
 File-by-file specs — the `deck.json` schema, `deck.tsv` columns, `exporter.write_mwdeck`, and the `analysis.md` frontmatter and section structure — are in `references/render-and-save.md`.
 

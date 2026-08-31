@@ -84,19 +84,26 @@ RESTRICTIONS COMPLIANCE
 - `Color` column value is the card's base mana cost colors from the `colors` field (not `color_identity`); kicker pips are excluded; CubeCobra single-letter notation: `B`, `R`, `BR`, `GU`, `C` (colorless); pad all Color values to the same column width for alignment
 - **Canonical section names for analysis.md** (strict — do not rename or reorder): `## MAINBOARD`, `## SIDEBOARD`, `## ANALYSIS`, `## MANA AUDIT: {PASS|WARN|FAIL}`, `## RESTRICTIONS COMPLIANCE`; sub-headers: `### LANDS`, `### CREATURES`, `### INSTANTS & SORCERIES`, `### OTHER SPELLS`
 - **`## ANALYSIS` always opens with `### DECK IDENTITY`** before any other content. Order within `## ANALYSIS`: `### DECK IDENTITY` → free-form observations → `### STRUCTURAL CHECKS` → `### FAILURE MODES` → `### CARDS CONSIDERED BUT EXCLUDED` → any remaining subsections.
-- **`### FAILURE MODES` is a required subsection** of `## ANALYSIS`: a table with one row per mode — all six of `flood`, `screw`, `decapitation`, `gas-out`, `raced`, `disruption-fizzle` — columns `Mode | Verdict | Reasoning`, filled verbatim from `build_output.failure_modes`.
+- **`### FAILURE MODES` is a required subsection** of `## ANALYSIS`: one row per mode, columns `Mode | Verdict | Reasoning`, filled verbatim from `build_output.failure_modes` (the six mode names are listed in the template above; `references/build.md` defines them).
 - **No Scryfall links. No external links of any kind.** Card names are plain text everywhere — in every card table, in the ANALYSIS body, and in `analysis.md`. Do not wrap card names in markdown links.
 
-## Phase 10 — analysis validator (`_tmp_validate_analysis.py`)
+## Phase 10 — analysis validator
 
-After writing `analysis.md`, run a light re-parse that asserts:
+```
+PYTHONPATH=. PYTHONIOENCODING=utf-8 python skills/build-deck/scripts/validate_analysis.py \
+    --run <run-token> --deck <deck-dir> [--saved]
+```
+
+Without `--saved` it checks the workspace preview; with it, the file written into `cubes/<slug>/decks/<name>/`. Run it on **every** write of `analysis.md`. It re-parses and asserts:
 - each section's summed `Qty` equals the number in that section's own header;
 - `spells + lands == total` in the `## MAINBOARD` header;
 - the section totals sum to the mainboard/sideboard counts in `deck.json`;
 - `analysis.md` contains zero occurrences of `scryfall`;
-- `### FAILURE MODES` exists inside `## ANALYSIS` and all six mode names — `flood`, `screw`, `decapitation`, `gas-out`, `raced`, `disruption-fizzle` — appear under it.
+- `### FAILURE MODES` exists inside `## ANALYSIS` and all six mode names appear under it.
 
-Any mismatch is a **hard failure**: regenerate `analysis.md` from the deck arrays. Never hand-patch the output to make the validator agree. This runs on every write of `analysis.md`.
+Any mismatch is a **hard failure**: regenerate `analysis.md` from the deck arrays. Never hand-patch the output to make the validator agree.
+
+**Do not hand-write the mechanical sections.** `scripts/render_save.py --run <token> --deck <dir>` emits every derived part of `analysis.md` — the card tables and their header counts, the structural report, the failure-mode table, the mana audit, the restrictions checklist — from `deck.json` and `build_output.json`. You supply only `build_output.analysis_body`: `### DECK IDENTITY` and the free-form observations. Generating the headers rather than typing them is what makes header-versus-list drift impossible instead of merely detectable.
 
 ## Phase 11 — saved-file specs
 
@@ -184,9 +191,9 @@ Card table columns in fenced code blocks: `CMC  Card  Qty  Color  Role  Rar` (ma
 
 **No Scryfall links. No external links of any kind.** Card names are plain text in every fenced code block table and throughout the `## ANALYSIS` body.
 
-**Header counts are derived and then verified.** Every `({N})` in a section header is computed from the deck arrays (sum of `qty`), never hand-written. After writing `analysis.md`, run `_tmp_validate_analysis.py` (see Phase 10) and confirm every check passes. A mismatch is a hard failure — regenerate the file; never hand-patch the number.
+**Header counts are derived and then verified.** Every `({N})` in a section header is computed from the deck arrays (sum of `qty`) by `render_save.py`, never hand-written. Then run `validate_analysis.py --saved` and confirm every check passes. A mismatch is a hard failure — regenerate the file; never hand-patch the number.
 
-The `frontmatter` dict passed to `exporter.write_deck_analysis_md()`:
+The `frontmatter` dict `render_save.py` passes to `exporter.write_deck_analysis_md()`:
 ```python
 {
     "deck_name": deck_name,

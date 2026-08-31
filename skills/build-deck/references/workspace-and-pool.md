@@ -46,7 +46,7 @@ rares stay at one row, so the distortion is uneven.
 
 Exclude: `image URL`, `image Back URL`, `MTGO ID`, `Custom`, `Voucher`, `status`, `Finish`, `Set`, `Collector Number`, and any other display-only metadata.
 
-**One exemption:** the Phase 11 export needs the set code, collector number and image URLs for `deck.tsv`, which the working pool deliberately excludes. Capture those in Phase 0 alongside the working pool — write `_workspace/<run-token>/export_meta.json` keyed by card name — so Phase 11 never has to re-open `enriched.json`.
+**One exemption:** the Phase 11 export needs the set code, collector number and image URLs for `deck.tsv`, which the working pool deliberately excludes. Write `_workspace/<run-token>/export_meta.json` keyed by card name — but build it at **Phase 11, for the ~50 cards actually in the deck**, not at Phase 0 for all several hundred in the pool. Its only consumer is the TSV writer, which runs once at the end; a whole-pool `export_meta` is ~66 KB of which ~10 KB is ever read. Re-opening `enriched.json` once at save time is cheaper than carrying the rest through the entire run.
 
 Read them under their **enriched.json** keys, which are snake_case: `set`, `collector_number`, `image_url`, `image_back_url`. The TSV *column headings* are `Set` / `Collector Number` / `image URL` — reading the card dict with the heading names returns `None` for every row and the export ships blank columns without erroring.
 
@@ -61,18 +61,28 @@ Basics are format-supplied (SKILL.md Phase 0). If any of the five basics is abse
   "power": null, "toughness": null, "board": "mainboard" }
 ```
 
-Same shape for Plains `{W}`, Swamp `{B}`, Mountain `{R}`, Forest `{G}`. Add a matching `export_meta.json` stub per synthesized basic (empty `Set` / `Collector Number` / image fields are fine — the Phase 11 TSV tolerates blanks). Basics already in the cube keep their real enriched data.
+Same shape for Plains `{W}`, Swamp `{B}`, Mountain `{R}`, Forest `{G}`. At Phase 11, a synthesized basic gets an `export_meta.json` stub with empty `Set` / `Collector Number` / image fields — the TSV tolerates blanks. Basics already in the cube keep their real enriched data.
 
 ## Workspace Layout
 
 ```
 _workspace/<run-token>/
-  working_pool.json          ← the filtered pool cache
-  export_meta.json           ← Set / Collector Number / image URLs for the Phase 11 export
-  seed.json                  ← the Phase 5A machine seed (pipeline + staple bands)
-  sweep.json                 ← the seed's partition (include + considered-but-excluded)
-  grill_input.json           ← the Phase 8 bundle read by the grill agents
-  _tmp_*.py                  ← temp validators / scripts
+  run_config.json            ← Phase 0: run token, cube slug, format, pool rules, commander
+  working_pool.json          ← the filtered pool cache (one row per DISTINCT card)
+  <deck-dir>/                ← one per deck built in this run
+    seed.json                ← the Phase 5A machine seed (four bands)
+    sweep.json               ← the seed's partition — include + considered-but-excluded
+    deck.json                ← the list under construction
+    build_output.json        ← the recorded derivation
+    audit.json  structural.json
+    grill_proposer.json      ← Phase 8, read by the Proposer only
+    grill_challenger.json    ← Phase 8, read by the Challenger only
+    analysis_preview.md
+  export_meta.json           ← written at Phase 11, deck cards only
 ```
 
-The Re-evaluation Path (Phase 9) rebuilds from Phase 5 with the next shortlisted pipeline, overwriting `seed.json`, `sweep.json` and `grill_input.json` in place — no per-attempt subdirectories are needed for single-deck builds. A new pipeline means new clusters, so the seed is re-run, never reused.
+`run_config.json` is what makes the shipped `skills/build-deck/scripts/*.py` generic: every one takes `--run <token> --deck <dir>` and reads format, deck size, pool rules and commander from it rather than hardcoding them. Write it at Phase 0 before anything else.
+
+**Never write a readable pool dump** (`wb_pool.txt` and friends). `working_pool.json` already holds every field, the scripts query it directly, and a 37 KB re-rendering of the same data is a second copy that can go stale. Query the cache; do not re-render it.
+
+The Re-evaluation Path (Phase 9) rebuilds from Phase 5 with the next shortlisted pipeline, overwriting that deck dir's artifacts in place. A new pipeline means new clusters, so the seed is re-run, never reused.
