@@ -27,8 +27,18 @@ base and what checklist items 2, 5 and 10 read.
 
 The dossier ships WHOLE to the Challenger. An earlier proposal trimmed tribal_rosters,
 structural_census and pool_limits as unreferenced; the run record contradicts that —
-structural_census.graveyard_hate ("the cube contains no graveyard hate at all") was
-load-bearing in two decks, and tribal_rosters verified a 51-creature tribal count twice.
+structural_census.graveyard_hate was load-bearing in two decks, and tribal_rosters
+verified a 51-creature tribal count twice.
+
+That graveyard_hate anecdote used to read "the cube contains no graveyard hate at all".
+It was wrong, and it is worth keeping as a cautionary note rather than deleting: the zero
+was a false negative in dossier._GY_HATE_RE, which matched only whole-graveyard exile and
+missed the commoner single-card form, on a cube that actually contains two such cards.
+Two decks conceded the graveyard threat class on that zero. The regex is fixed (see the
+comment on _GY_HATE_RE) — but the conclusion here stands and is strengthened: the dossier
+ships whole BECAUSE its census fields drive real decisions, which is exactly why a wrong
+one is expensive — and why a coverage_declaration that conceded a threat class on the
+strength of a census zero should have cited the probe it was trusting.
 
 TWO BUGS THIS FIXES, both in the `deck` array:
   tags       — deck_audit derives ramp_count/cantrip_count from card["tags"]. Without
