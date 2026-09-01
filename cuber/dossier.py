@@ -26,7 +26,7 @@ DOSSIER_FILENAME = "dossier.json"
 
 # Bump whenever census semantics change: a cached dossier built under older semantics
 # is invalid even if the cube itself has not changed (load_dossier discards it).
-DOSSIER_VERSION = 4
+DOSSIER_VERSION = 5
 
 # A regex census can prove presence. It cannot prove absence. Every consumer of this
 # file must read pool_limits through this caveat.
@@ -61,8 +61,26 @@ _SWEEPER_RE = re.compile(
 _GRANTS_HASTE_RE = re.compile(r"(gains? haste|have haste|has haste)", re.IGNORECASE)
 # Hate exiles somebody ELSE's graveyard. Exiling your own cards as an activation cost
 # (Grim Lavamancer, Body Snatcher) is fuel, not hate — do not count it.
+#
+# Two syntactic families, and the first branch alone used to be the whole regex:
+#   whole-graveyard — "exile target player's graveyard", "exile all graveyards"
+#   single-card     — "exile target card from a graveyard", "exile cards from graveyards"
+# Matching only the first is why this probe returned ZERO on a cube containing both
+# Invasion of Innistrad // Deluge of the Dead ("{2}{B}: Exile target card from a
+# graveyard.") and Soul-Guide Gryff. Single-card exile is the commoner printing by far.
+#
+# `your` is deliberately absent from the article alternation, so "from your graveyard"
+# cannot match — that is fuel (flashback, escape, delve, disturb), not hate. The gap
+# [^.:;\n]*? cannot cross a sentence break or the ':' of an activated cost, which is
+# exactly where self-exile costs live ("{1}{W}, Exile this card from your graveyard: ...").
+#
+# KNOWN GAP: replacement-effect hate (Leyline of the Void, Rest in Peace — "if a card
+# would be put into a graveyard ... exile it instead") is still not matched. That is a
+# third family, not a tweak to these two; CENSUS_CAVEAT governs it until it is added.
 _GY_HATE_RE = re.compile(
-    r"exile (?:target (?:player|opponent)'?s?|all|each (?:player|opponent)'?s?) graveyards?",
+    r"exile (?:target (?:player|opponent)'?s?|all|each (?:player|opponent)'?s?) graveyards?"
+    r"|\bexile\b[^.:;\n]*?cards? from "
+    r"(?:(?:a|an opponent'?s|each opponent'?s|target (?:player|opponent)'?s) )?graveyards?\b",
     re.IGNORECASE,
 )
 _TUTOR_RE = re.compile(r"search your library", re.IGNORECASE)
@@ -415,10 +433,30 @@ def _fingerprint(short_id: str) -> Dict[str, Any]:
     return {"card_count": meta.get("card_count"), "fetched_at": meta.get("fetched_at")}
 
 
-def build_dossier(id_or_slug: str) -> Dict[str, Any]:
-    """Compute the machine census. Preserves any authored interaction_chains already on disk."""
+def _mainboard_cards(id_or_slug: str) -> List[Card]:
+    """Enriched mainboard cards, restricted to what mainboard.csv actually lists.
+
+    mainboard.csv is the ground truth of what is in the cube (same rule as
+    cube_search.load_merged_pool). enriched.json can retain cards that were later
+    removed from the cube; counting those inflates every census in the dossier.
+    """
+    from .cube_search import load_csv_pool
+
     cube: Cube = load_enriched(id_or_slug)
     cards = [c for c in cube.cards if (c.board or "mainboard") == "mainboard"]
+
+    try:
+        in_cube = {c["name"].strip().lower() for c in load_csv_pool(id_or_slug)}
+    except FileNotFoundError:
+        return cards
+    if not in_cube:
+        return cards
+    return [c for c in cards if c.name.strip().lower() in in_cube]
+
+
+def build_dossier(id_or_slug: str) -> Dict[str, Any]:
+    """Compute the machine census. Preserves any authored interaction_chains already on disk."""
+    cards = _mainboard_cards(id_or_slug)
 
     environment = _environment(cards)
     mana = _mana_infrastructure(cards)
