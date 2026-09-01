@@ -247,6 +247,36 @@ def main() -> int:
         if rc:
             print(out[-800:])
 
+        # Phase 9 approval round. Runs on every format for free, and catches the two ways
+        # --delta can silently stop paying for itself: re-shipping a full artifact, or
+        # rewriting the snapshot it is supposed to diff against.
+        full_p = os.path.join(rd, "d1", "grill_challenger.json")
+        before = os.path.getsize(full_p) if os.path.exists(full_p) else 0
+        rc, out = sh("build_bundle.py", "--run", token, "--deck", "d1", "--delta")
+        delta_p = os.path.join(rd, "d1", "grill_delta.json")
+        problems = []
+        if rc:
+            problems.append("nonzero exit")
+        if not os.path.exists(delta_p):
+            problems.append("no grill_delta.json")
+        else:
+            with open(delta_p, encoding="utf-8") as f:
+                delta = json.load(f)
+            leaked = [k for k in ("build_output", "dossier", "sweep", "working_pool")
+                      if k in delta]
+            if leaked:
+                problems.append(f"re-shipped {leaked}")
+            if not delta.get("deck"):
+                problems.append("empty deck array")
+            if os.path.getsize(delta_p) >= before:
+                problems.append("not smaller than the full bundle")
+        if before and os.path.getsize(full_p) != before:
+            problems.append("--delta rewrote grill_challenger.json (snapshot destroyed)")
+        print(f"  build_bundle --delta  {'ok' if not problems else 'FAIL: ' + '; '.join(problems)}")
+        if problems:
+            overall |= 1
+            print(out[-800:])
+
         rc, out = sh("render_save.py", "--run", token, "--deck", "d1")
         print(f"  render_save           {'ok' if 'Traceback' not in out else 'CRASH'}")
         overall |= int("Traceback" in out)

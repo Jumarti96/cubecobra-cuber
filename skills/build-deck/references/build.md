@@ -236,6 +236,18 @@ It qty-expands the mainboard, pulls `threat_profile` from the cube dossier, prin
 
 `coverage_declaration` maps each of the five threat classes — `wide_boards`, `single_large_threat`, `noncreature_permanents`, `stack`, `graveyard` — to either `{"cards": [<mainboard names>]}` or `{"conceded": "<one-line mechanism reason>"}`. A concession is legitimate (a fast enough clock answers everything) but it must be written; the cheapest lie is the class you never mention.
 
+**A concession that the class is *unanswerable in the deck's colours* must cite a machine probe.** That is a claim about the **pool**, not about the deck, and a hand scan across several hundred cards cannot be audited after the fact. Paste the invocation and its row count into the concession:
+
+```
+cube_search.search_pool(pool, color_identity=core_colors,
+                        splash_color_identity=splash_colors,
+                        oracle_pattern=r"<the threat-class pattern>")   # -> 0 rows
+```
+
+A cited `dossier.structural_census` key with its count also qualifies. An empty result is a probe that found nothing, **not** proof of absence (`dossier.census_caveat`) — stating the pattern is exactly what makes the concession attackable: the Challenger then audits the pattern, not your recollection. Note the weaker claim is usually the true one and is always available: "unanswered in the mainboard at an acceptable cost" needs no pool-wide proof.
+
+This rule has a case history. `structural_census.graveyard_hate` read `[]` on a cube that contains `Invasion of Innistrad // Deluge of the Dead` ("{2}{B}: Exile target card from a graveyard.") and `Soul-Guide Gryff`, because the census probe matched only whole-graveyard exile. Two decks in one run conceded the graveyard class on that zero, and in one of them the builder's own ad-hoc scan had already *returned* the card before the prose claimed it did not exist. A cited probe would have let the Challenger see and break the pattern; an uncited hand scan could not be challenged at all.
+
 ## `build_output.failure_modes` — six entries, mitigation XOR accepted
 
 Reason through each mode against THIS deck. Mitigate only when doing so does not cost the deck's identity or winning plan — and when you don't mitigate, the acceptance states that cost. Each mode maps to exactly one of two shapes:

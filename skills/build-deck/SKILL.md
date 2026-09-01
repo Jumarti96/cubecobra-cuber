@@ -306,6 +306,31 @@ It writes **two** files, one per Phase 9 role, and prints both sizes:
 | `grill_proposer.json` (~25 KB) | `deck`, `deck_meta`, `audit`, `card_pool_rules`, `restrictions_checklist`, `validation_report`, `build_output_lite` | the Proposer, only |
 | `grill_challenger.json` (~250 KB) | the above plus full `build_output`, `sweep`, `working_pool`, `dossier` | the Challenger, only |
 
+**Phase 9 approval rounds use a third file.** Re-run the same script with `--delta`:
+
+```
+PYTHONPATH=. PYTHONIOENCODING=utf-8 python skills/build-deck/scripts/build_bundle.py \
+    --run <run-token> --deck <deck-dir> --delta
+```
+
+| File | Contents | Read by |
+|---|---|---|
+| `grill_delta.json` (~30 KB) | `deck`, `deck_meta`, `audit`, `card_pool_rules`, `restrictions_checklist`, `validation_report`, `structural`, `build_output_delta`, `build_output_delta_keys`, `deck_changes` | the Challenger, in an approval round |
+
+An approval round asks the Challenger to verify a handful of changed slots, and re-reading the whole
+bundle to do it wastes ~90% of the load on artifacts that have not moved since round 0 — measured at
+five rounds across a three-deck run. The delta ships the deck array, the re-run gate outputs and only
+the `build_output` keys that actually changed: an ~88% cut.
+
+The script diffs against the `grill_challenger.json` already on disk, which is a byte-exact snapshot of
+what the Challenger's context holds — so **you declare nothing about what changed**; it is computed.
+Two consequences: `--delta` deliberately does **not** rewrite the full bundles (that would destroy the
+snapshot the next delta diffs against), and `--delta` with no snapshot is an error rather than a silent
+fallback. A fresh Challenger, or a re-dispatched Proposer, needs a full non-`--delta` rebuild first.
+
+If a finding genuinely needs a pool re-check, do not rebuild the full bundle — pass
+`--pool-query "<oracle regex>"` to attach only the matching rows. `--with-pool` is the last resort.
+
 **Why two files and not one with instructions.** The Proposer defends the cards in `deck`; it never needs the pool or the dossier, which are ~77% of the bundle. Telling one agent "do not read that key" is a prompt-adherence gamble — splitting the file is a guarantee. `build_output_lite` deliberately withholds `count_dependent_verdicts`: the Proposer's contract requires it to state counts *itself*, so handing it mine would be anti-adversarial.
 
 The `deck` rows carry `tags` (so the Challenger's item-8 `mana_audit` re-run reproduces `accel_count` instead of computing zero and reporting a phantom discrepancy) and `usable_as` + `cast_mode` (so the Proposer can meet its off-identity contract by naming the legalising mode). The Challenger's `working_pool` is projected down by four fields that no checklist item reads; `oracle_text` and `taxonomic_profile` are never trimmed — they are the IRON RULE's evidence base. Both files are written with compact separators; nothing parses them by line.
@@ -333,9 +358,23 @@ You built this deck, so you defend it and judge the Challenger's findings. Every
 - A BLOCKING finding may be CONTESTed only with an oracle quote or a reproduced count in `Grounds`. "Marginal", "fine as is", and other adjectives are not grounds. An absence finding naming a card whose oracle-grounded count you cannot rebut is `IMPLEMENT`.
 - ADVISORY findings: decide on the merits with one-line grounds — verify each claim against oracle text first. No approval needed.
 
-**2. Repair the deck yourself.** Apply every `IMPLEMENT` row, recount any count-dependent verdict whose denominator moved, then re-run the Phase 5C validator, the Phase 6 audit, and the Phase 6b gate on the result.
+**2. Repair the deck yourself — in ONE batched pass, then re-run only what the repair could have changed.** Apply **every** `IMPLEMENT` row before running any gate, and recount any count-dependent verdict whose denominator moved. Gates run **once per grill round**, over the batched result — never once per finding. Gating a single swap while three more are pending produces a verdict about a list that will not exist.
 
-**3. Approval round** (skip only when the Challenger reported zero BLOCKING findings). Send back to the **same Challenger agent** (SendMessage — its context is intact; do not spawn a fresh one): the Resolution Table, **only the changed slots** (`−<card> +<card>` per swap, with counts), and the re-run gate outputs **in full**. Do not resend the whole deck list — its context already holds the previous one, and the gate outputs are what actually prove the repair. It returns a verdict per BLOCKING finding: RESOLVED or UNRESOLVED with a one-line reason. Any UNRESOLVED verdict → one more repair + review round. **Cap: two review rounds.** BLOCKING findings still UNRESOLVED after round two are escalated to the user with both sides' reasoning; the user rules.
+Then re-run by **the file you changed**, not by intent:
+
+| What the repair changed | Re-run |
+|---|---|
+| `deck.json` — any card, any qty, either board | `validate_build.py`, `mana_audit.py`, `land_math.py` (non-commander), `structural.py`, then `build_bundle.py --delta` |
+| `checks.json` only — `role_counts` / `coverage_declaration` / `thesis_turn` | `structural.py` only |
+| `build_output.json` prose only — `deck_identity`, `structural_responses`, `failure_modes`, `analysis_body`, a reworded rationale | **nothing** |
+
+`validate_build.py`, `mana_audit.py` and `land_math.py` read `deck.json`, `run_config.json` and `working_pool.json`; `structural.py` additionally reads `--checks`. **None of them opens `build_output.json`** — `structural.py` mentions it only in a docstring. A prose-only `build_output` edit therefore cannot change any gate verdict, and re-running the gates to "confirm" it spends tokens reproducing a byte-identical result. The one script that *does* read `build_output.json` is `render_save.py`, so a prose edit is visible at Phase 10 and never at a gate.
+
+The rule keys off the changed file precisely so it cannot be over-applied: if you edited a **count** in `build_output`, you almost certainly also changed `deck.json` or `checks.json`, and any `deck.json` touch re-runs everything.
+
+**3. Approval round** (skip only when the Challenger reported zero BLOCKING findings). Re-run `build_bundle.py --delta` (Phase 8), then send back to the **same Challenger agent** (SendMessage — its context is intact; do not spawn a fresh one): the Resolution Table, **only the changed slots** as `−<card> +<card>` with counts, and **the path to `grill_delta.json`**.
+
+Do not paste the deck list into the message, and do not point the agent back at `grill_challenger.json`. The delta already carries the updated `deck` array, the re-run gate outputs in full, and only the `build_output` keys that changed, at roughly a tenth of the full bundle — the machine resends the list so you never retype it, and the agent's recounts get correct denominators. (`--delta` does not rewrite the full bundles; they are the snapshot it was computed against.) It returns a verdict per BLOCKING finding: RESOLVED or UNRESOLVED with a one-line reason. Any UNRESOLVED verdict → one more repair + review round. **Cap: two review rounds.** BLOCKING findings still UNRESOLVED after round two are escalated to the user with both sides' reasoning; the user rules.
 
 **4. Finalization gate.** Phase 10 is reachable only when every BLOCKING finding is RESOLVED — or the user has ruled on it — AND the final list satisfies: every card in the cube + oracle text supports every role + audit ≥ WARN + Phase 5C all-PASS + Phase 6b HARD gates pass.
 
