@@ -76,7 +76,10 @@ _workspace/<run-token>/
     build_output.json        ← the recorded derivation
     audit.json  structural.json
     grill_proposer.json      ← Phase 8, read by the Proposer only
-    grill_challenger.json    ← Phase 8, read by the Challenger only
+    grill_challenger.json    ← Phase 8, read by the Challenger only; also the SNAPSHOT
+                               each grill_delta.json is diffed against, so a Phase 9
+                               approval round must not rewrite it
+    grill_delta.json         ← Phase 9 approval rounds, read by the Challenger only
     analysis_preview.md
   export_meta.json           ← written at Phase 11, deck cards only
 ```

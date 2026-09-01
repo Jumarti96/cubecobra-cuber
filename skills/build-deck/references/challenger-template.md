@@ -54,6 +54,8 @@ Attack the deck independently. You are the sole verifier for all hard checks. Wo
     - A missing mode or an empty reasoning is automatically UNSATISFIED.
     Every UNSATISFIED mark is a **BLOCKING** finding and must come with a concrete suggestion from `working_pool`.
 
+14. **Uncited unanswerability** — any `coverage_declaration` concession claiming a threat class is *unanswerable in the deck's colours* must cite a machine probe (a `search_pool` invocation with its pattern and row count, or a named `dossier.structural_census` key with its count). An uncited claim of that shape is a **BLOCKING** process finding: it is a claim about the whole pool that no reader can check. If a probe IS cited, do not accept it on sight — audit the **pattern**: a pattern too narrow for the class is an ordinary finding against the pattern, and that is exactly the failure this rule exists to catch (`structural_census.graveyard_hate` once read `[]` on a cube containing two graveyard-exile cards because the probe matched only whole-graveyard effects). A concession phrased as "unanswered in the mainboard at an acceptable cost" is a claim about the deck, not the pool, and needs no probe.
+
 Your own attacks are bound by the Counts Principle. You may not reject a card on a property of the card in isolation. "It is symmetric", "it only reduces generic mana", "it is win-more" are not findings. A finding is a count against this list, with a numerator and a denominator.
 
 **Severity — tag every finding.** Each finding carries `severity: BLOCKING | ADVISORY`. **BLOCKING** = it materially affects legality, the deck's identity, or the winning plan: any hard-check violation (membership, restrictions, mana regression, structural failure, irreproducible count), an absence backed by an oracle-grounded count, an UNSATISFIED failure-mode review. **ADVISORY** = a marginal swap, a role-text quibble, a small proportional deviation. The builder cannot finalize the deck while a BLOCKING finding stands unresolved — tag severity as the evidence warrants, neither inflated nor softened.
@@ -62,9 +64,11 @@ Your own attacks are bound by the Counts Principle. You may not reject a card on
 
 ## Challenger — approval round
 
-After resolving, the orchestrator may message you again with its Resolution Table and the updated deck list. In that round:
+After resolving, the orchestrator may message you again with its Resolution Table and the path to `grill_delta.json`. In that round:
 
-- For each of your BLOCKING findings, verify the row: re-run the specific count or oracle check behind it against the updated list. Return **RESOLVED** or **UNRESOLVED** per finding, one line of reason each.
+- **Read the delta. Do not re-read `grill_challenger.json`.** The delta's `deck` array is authoritative for the updated list, and `structural` / `audit` / `validation_report` are the re-run gate outputs. Everything the delta omits — `working_pool`, `dossier`, `sweep`, and every unchanged `build_output` key — is unchanged from the bundle already in your context. Re-reading the full bundle to reach an unchanged key costs ~10x the delta and tells you nothing new.
+- If verifying a finding genuinely needs a fresh pool scan, **say which oracle pattern you need** and the orchestrator re-runs with `--pool-query "<regex>"` to attach just those rows. Do not re-read the full bundle to get at the pool.
+- For each of your BLOCKING findings, verify the row: re-run the specific count or oracle check behind it against the updated list. Return **RESOLVED** or **UNRESOLVED** per finding, one line of reason each. Note that every denominator moves when any slot changes, which is why the delta ships the whole `deck` array rather than just the swapped cards.
 - A CONTEST row stands only on an oracle quote or a count you can reproduce; if the grounds hold, the finding is RESOLVED.
 - Raise no new findings in an approval round unless a repair introduced a new hard-check violation.
 - Open and close your reply with your report markers.
